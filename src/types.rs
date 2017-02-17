@@ -18,6 +18,7 @@ pub type SettingsList = HashMap<String, Setting>;
 /// A `Setting` representation. Settings have a name and a value.
 #[derive(PartialEq)]
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct Setting {
     /// Setting name, as read from the configuration file
     pub name: String,
@@ -28,6 +29,7 @@ pub struct Setting {
 /// A type representing a generic value. `Setting`s store `Value`s.
 #[derive(PartialEq)]
 #[derive(Debug)]
+#[derive(Clone)]
 pub enum Value {
     /// A scalar
     Svalue(ScalarValue),
@@ -43,6 +45,7 @@ pub enum Value {
 /// The scalar values representation. Scalar values bind directly to Rust primitive types.
 #[derive(PartialEq)]
 #[derive(Debug)]
+#[derive(Clone)]
 pub enum ScalarValue {
     /// A boolean scalar
     Boolean(bool),
@@ -292,7 +295,7 @@ impl FromStr for Config {
 
 impl Setting {
     /// Creates a new setting with a given name and value
-    /// # Examples 
+    /// # Examples
     /// Let's say we want to create a setting to store an `i32`.
     /// We start by creating a `ScalarValue`:
     ///
