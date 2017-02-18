@@ -19,10 +19,10 @@
 //! The first step is to create a new, empty settings list:
 //!
 //! ```
-//! use config::types::SettingsList;
-//! # use config::types::ScalarValue;
-//! # use config::types::Value;
-//! # use config::types::Setting;
+//! use libconfig::types::SettingsList;
+//! # use libconfig::types::ScalarValue;
+//! # use libconfig::types::Value;
+//! # use libconfig::types::Setting;
 //!
 //! let mut my_settings_list = SettingsList::new();
 //! # let setting_name = "my_setting".to_string();
@@ -35,10 +35,10 @@
 //! Next, we define the setting name as `my_setting`:
 //!
 //! ```
-//! # use config::types::SettingsList;
-//! # use config::types::ScalarValue;
-//! # use config::types::Value;
-//! # use config::types::Setting;
+//! # use libconfig::types::SettingsList;
+//! # use libconfig::types::ScalarValue;
+//! # use libconfig::types::Value;
+//! # use libconfig::types::Setting;
 //!
 //! # let mut my_settings_list = SettingsList::new();
 //! let setting_name = "my_setting".to_string();
@@ -51,10 +51,10 @@
 //! Then, we create a boolean scalar value holding `true`:
 //!
 //! ```
-//! # use config::types::SettingsList;
-//! use config::types::ScalarValue;
-//! # use config::types::Value;
-//! # use config::types::Setting;
+//! # use libconfig::types::SettingsList;
+//! use libconfig::types::ScalarValue;
+//! # use libconfig::types::Value;
+//! # use libconfig::types::Setting;
 //!
 //! # let mut my_settings_list = SettingsList::new();
 //! # let setting_name = "my_setting".to_string();
@@ -67,10 +67,10 @@
 //! ... and we wrap it in a `Value`, because settings store generic values:
 //!
 //! ```
-//! # use config::types::SettingsList;
-//! # use config::types::ScalarValue;
-//! use config::types::Value;
-//! # use config::types::Setting;
+//! # use libconfig::types::SettingsList;
+//! # use libconfig::types::ScalarValue;
+//! use libconfig::types::Value;
+//! # use libconfig::types::Setting;
 //!
 //! # let mut my_settings_list = SettingsList::new();
 //! # let setting_name = "my_setting".to_string();
@@ -83,10 +83,10 @@
 //! And finally, we create the new setting:
 //!
 //! ```
-//! # use config::types::SettingsList;
-//! # use config::types::ScalarValue;
-//! # use config::types::Value;
-//! use config::types::Setting;
+//! # use libconfig::types::SettingsList;
+//! # use libconfig::types::ScalarValue;
+//! # use libconfig::types::Value;
+//! use libconfig::types::Setting;
 //!
 //! # let mut my_settings_list = SettingsList::new();
 //! # let setting_name = "my_setting".to_string();
@@ -98,10 +98,10 @@
 //! ... and insert it into the settings list:
 //!
 //! ```
-//! # use config::types::SettingsList;
-//! # use config::types::ScalarValue;
-//! # use config::types::Value;
-//! # use config::types::Setting;
+//! # use libconfig::types::SettingsList;
+//! # use libconfig::types::ScalarValue;
+//! # use libconfig::types::Value;
+//! # use libconfig::types::Setting;
 //!
 //! # let mut my_settings_list = SettingsList::new();
 //! # let setting_name = "my_setting".to_string();
@@ -113,10 +113,10 @@
 //!
 //! Here's the complete example:
 //! ```
-//! use config::types::SettingsList;
-//! use config::types::ScalarValue;
-//! use config::types::Value;
-//! use config::types::Setting;
+//! use libconfig::types::SettingsList;
+//! use libconfig::types::ScalarValue;
+//! use libconfig::types::Value;
+//! use libconfig::types::Setting;
 //!
 //! let mut my_settings_list = SettingsList::new();
 //! let setting_name = "my_setting".to_string();
@@ -130,11 +130,11 @@
 //! This is what the user sees and interacts with. It is as simple as:
 //!
 //! ```
-//! # use config::types::SettingsList;
-//! # use config::types::ScalarValue;
-//! # use config::types::Value;
-//! # use config::types::Setting;
-//! use config::types::Config;
+//! # use libconfig::types::SettingsList;
+//! # use libconfig::types::ScalarValue;
+//! # use libconfig::types::Value;
+//! # use libconfig::types::Setting;
+//! use libconfig::types::Config;
 //!
 //! # let mut my_settings_list = SettingsList::new();
 //! # let setting_name = "my_setting".to_string();
@@ -153,7 +153,7 @@ use std::iter;
 
 use types::{SettingsList, Setting, Value, ScalarValue, ArrayValue, ListValue, Config};
 
-use nom::{alpha, alphanumeric, digit, multispace, not_line_ending, eof};
+use nom::{alpha, alphanumeric, digit, multispace, not_line_ending};
 use nom::IResult;
 use nom::IResult::*;
 
@@ -177,13 +177,12 @@ pub fn parse(config: &str) -> Result<Config, ParseError> {
 // ~~~ Top-level parser ~~~
 // ~~~~~~~~~~~~~~~~~~~~~~~~
 named!(conf<&[u8], Config>,
-       chain!(
-           c: alt!(map_res!(settings_list,
-                            |l| -> Result<Config, ()> { Ok(Config::new(l)) }) |
-                   map_res!(blanks,
-                            |_| -> Result<Config, ()> { Ok(Config::new(SettingsList::new())) })) ~
-           eof,
-           || { c }));
+       do_parse!(
+           c: alt_complete!(
+               settings_list => {|l|  Config::new(l)} |
+               blanks => {|_| Config::new(SettingsList::new()) }) >>
+           eof!() >>
+           (c)));
 
 // ~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Settings List ~~~
@@ -203,28 +202,27 @@ named!(settings_list_elems<&[u8], Vec<Setting> >, many1!(setting));
 // ~~~ Setting parser and auxiliary parsers ~~~
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 named!(setting<&[u8], Setting>,
-       chain!(
-           blanks? ~
-           name: setting_name ~
-           blanks? ~
-           alt!(tag!(":") | tag!("=")) ~
-           blanks? ~
-           v: value ~
-           blanks? ~
-           tag!(";") ~
-           blanks?,
-           || { Setting::new(name, v) }));
+       do_parse!(
+           opt!(blanks) >>
+           name: setting_name >>
+           opt!(blanks) >>
+           alt!(tag!(":") | tag!("=")) >>
+           opt!(blanks) >>
+           v: value >>
+           opt!(blanks) >>
+           tag!(";") >>
+           opt!(blanks) >>
+           (Setting::new(name, v))));
 
 // Matches a setting name of the form [a-zA-Z][-a-zA-Z0-9_]*
 named!(setting_name<&[u8], String>,
-       chain!(
-           h: map_res!(alpha, from_utf8) ~
-           t: many0!(map_res!(alt!(tag!("-") | tag!("_") | alphanumeric), from_utf8)),
-           || {
-               t.into_iter().fold(h.to_string(), |mut accum, slice| {
-                   accum.push_str(slice);
-                   accum
-               })}));
+       do_parse!(
+           h: map_res!(alpha, from_utf8) >>
+           t: many0!(map_res!(alt!(tag!("-") | tag!("_") | alphanumeric), from_utf8)) >>
+           (t.into_iter().fold(h.to_string(), |mut accum, slice| {
+               accum.push_str(slice);
+               accum
+           }))));
 
 // ~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Values parser ~~~
@@ -252,64 +250,60 @@ named!(scalar_value<&[u8], ScalarValue>,
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 named!(array<&[u8], Value>,
        alt!(
-           chain!(tag!("[") ~ blanks? ~ tag!("]"),
-                  || { Value::Array(Vec::new()) })
-           |
-           chain!(
-               tag!("[") ~
-               e: boolean_array_elements ~
-               tag!("]"),
-               || { Value::Array(e) })
-           |
-           chain!(
-               tag!("[") ~
-               e: str_array_elements ~
-               tag!("]"),
-               || { Value::Array(e) })
-           |
-           chain!(
-               tag!("[") ~
-               e: flt64_array_elements ~
-               tag!("]"),
-               || { Value::Array(e) })
-           |
-           chain!(
-               tag!("[") ~
-               e: flt32_array_elements ~
-               tag!("]"),
-               || { Value::Array(e) })
-           |
-           chain!(
-               tag!("[") ~
-               e: int64_array_elements ~
-               tag!("]"),
-               || { Value::Array(e) })
-           |
-           chain!(
-               tag!("[") ~
-               e: int32_array_elements ~
-               tag!("]"),
-               || { Value::Array(e) })));
+           do_parse!(tag!("[") >>
+                     opt!(blanks) >>
+                     tag!("]") >>
+                     (Value::Array(Vec::new()))) |
+           do_parse!(
+               tag!("[") >>
+               e: boolean_array_elements >>
+               tag!("]") >>
+               (Value::Array(e))) |
+           do_parse!(
+               tag!("[") >>
+               e: str_array_elements >>
+               tag!("]") >>
+               (Value::Array(e))) |
+           do_parse!(
+               tag!("[") >>
+               e: flt64_array_elements >>
+               tag!("]") >>
+               (Value::Array(e))) |
+           do_parse!(
+               tag!("[") >>
+               e: flt32_array_elements >>
+               tag!("]") >>
+               (Value::Array(e))) |
+           do_parse!(
+               tag!("[") >>
+               e: int64_array_elements >>
+               tag!("]") >>
+               (Value::Array(e))) |
+           do_parse!(
+               tag!("[") >>
+               e: int32_array_elements >>
+               tag!("]") >>
+               (Value::Array(e)))));
 
 macro_rules! array_elems {
     ($name:ident, $parser:ident) => (
         named!($name<&[u8], ArrayValue>,
-               chain!(
-                   blanks? ~
-                   first: $parser ~
-                   rest:  many0!(chain!(
-                                     blanks? ~
-                                     tag!(",") ~
-                                     blanks? ~
-                                     v: $parser,
-                                     || { v } )) ~
-                   blanks?,
-                   || {
+               do_parse!(
+                   opt!(blanks) >>
+                   first: $parser >>
+                   rest:  many0!(do_parse!(
+                                     opt!(blanks) >>
+                                     tag!(",") >>
+                                     opt!(blanks) >>
+                                     v: $parser >>
+                                     (v))) >>
+                   opt!(blanks) >>
+                   ({
                        let mut res = Vec::new();
                        res.push(Value::Svalue(first));
                        res.extend(rest.into_iter().map(|v| Value::Svalue(v)));
                        res
-                      }));
+                   })));
         );
 }
 
@@ -325,37 +319,40 @@ array_elems!(int32_array_elements, int32_scalar_value);
 // ~~~~~~~~~~~~~
 named!(list<&[u8], Value>,
        alt!(
-           chain!(tag!("(") ~ blanks? ~ tag!(")"), || { Value::List(ListValue::new()) })
-           |
-           chain!(
-               tag!("(") ~
-                   blanks? ~
-                   first: value ~
-                   blanks? ~
-                   rest: many0!(chain!(
-                                    blanks? ~
-                                    tag!(",") ~
-                                    blanks? ~
-                                    v: value,
-                                    || { v })) ~
-                   blanks? ~
-                   tag!(")"),
-                   || {
-                       let mut res = ListValue::new();
-                       res.push(first);
-                       res.extend(rest.into_iter());
-                       Value::List(res)
-                      })));
+           do_parse!(
+               tag!("(") >>
+               opt!(blanks) >>
+               tag!(")") >>
+               (Value::List(ListValue::new()))) |
+           do_parse!(
+               tag!("(") >>
+               opt!(blanks) >>
+               first: value >>
+               opt!(blanks) >>
+               rest: many0!(do_parse!(
+                       opt!(blanks) >>
+                       tag!(",") >>
+                       opt!(blanks) >>
+                       v: value >>
+                       (v))) >>
+               opt!(blanks) >>
+               tag!(")") >>
+               ({
+                   let mut res = ListValue::new();
+                   res.push(first);
+                   res.extend(rest.into_iter());
+                   Value::List(res)
+               }))));
 
 // ~~~~~~~~~~~~~
 // ~~~ Group ~~~
 // ~~~~~~~~~~~~~
 named!(group<&[u8], SettingsList>,
-       chain!(
-           tag!("{") ~
-           l: settings_list ~
-           tag!("}"),
-           || { l }));              
+       do_parse!(
+           tag!("{") >>
+           l: settings_list >>
+           tag!("}") >>
+           (l)));
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Boolean values parser and auxiliary parsers ~~~
@@ -363,59 +360,55 @@ named!(group<&[u8], SettingsList>,
 named!(boolean_scalar_value<&[u8], ScalarValue>, alt!(bool_true_value | bool_false_value | bool_env_value));
 
 named!(bool_true_value<&[u8], ScalarValue>,
-       alt!(chain!(
-               alt!(tag!("T") | tag!("t")) ~
-               alt!(tag!("R") | tag!("r")) ~
-               alt!(tag!("U") | tag!("u")) ~
-               alt!(tag!("E") | tag!("e")),
-               || { ScalarValue::Boolean(true) } )
-            |
-            chain!(
-               alt!(tag!("Y") | tag!("y")) ~
-               alt!(tag!("E") | tag!("e")) ~
-               alt!(tag!("S") | tag!("s")),
-               || { ScalarValue::Boolean(true) } )
-            |
-            chain!(
-               alt!(tag!("O") | tag!("o")) ~
-               alt!(tag!("N") | tag!("n")),
-               || { ScalarValue::Boolean(true) } )));
+       alt!(do_parse!(
+               alt!(tag!("T") | tag!("t")) >>
+               alt!(tag!("R") | tag!("r")) >>
+               alt!(tag!("U") | tag!("u")) >>
+               alt!(tag!("E") | tag!("e")) >>
+               (ScalarValue::Boolean(true))) |
+            do_parse!(
+               alt!(tag!("Y") | tag!("y")) >>
+               alt!(tag!("E") | tag!("e")) >>
+               alt!(tag!("S") | tag!("s")) >>
+               (ScalarValue::Boolean(true))) |
+            do_parse!(
+               alt!(tag!("O") | tag!("o")) >>
+               alt!(tag!("N") | tag!("n")) >>
+               (ScalarValue::Boolean(true)))));
 
 named!(bool_false_value<&[u8], ScalarValue>,
-       alt!(chain!(
-               alt!(tag!("F") | tag!("f")) ~
-               alt!(tag!("A") | tag!("a")) ~
-               alt!(tag!("L") | tag!("l")) ~
-               alt!(tag!("S") | tag!("s")) ~
-               alt!(tag!("E") | tag!("e")),
-               || { ScalarValue::Boolean(false) } )
-            |
-            chain!(
-               alt!(tag!("N") | tag!("n")) ~
-               alt!(tag!("O") | tag!("o")),
-               || { ScalarValue::Boolean(false) } )
-            |
-            chain!(
-               alt!(tag!("O") | tag!("o")) ~
-               alt!(tag!("F") | tag!("f")) ~
-               alt!(tag!("F") | tag!("f")),
-               || { ScalarValue::Boolean(false) } )));
+       alt!(do_parse!(
+               alt!(tag!("F") | tag!("f")) >>
+               alt!(tag!("A") | tag!("a")) >>
+               alt!(tag!("L") | tag!("l")) >>
+               alt!(tag!("S") | tag!("s")) >>
+               alt!(tag!("E") | tag!("e")) >>
+               (ScalarValue::Boolean(false))) |
+            do_parse!(
+               alt!(tag!("N") | tag!("n")) >>
+               alt!(tag!("O") | tag!("o")) >>
+               (ScalarValue::Boolean(false))) |
+            do_parse!(
+               alt!(tag!("O") | tag!("o")) >>
+               alt!(tag!("F") | tag!("f")) >>
+               alt!(tag!("F") | tag!("f")) >>
+               (ScalarValue::Boolean(false)))));
 
 // Special boolean parser with syntax $"ENV_VAR_NAME"::bool which assumes the environment
 // variable $ENV_VAR_NAME as boolean and try to parse it.
 // We do a little hack here to avoid double codding; we call bool_true_value directly
 // on the value of the environment variable and iterpret the return value.
 named!(bool_env_value<&[u8], ScalarValue>,
-       chain!(
-               tag!("$") ~
-               n: string_literal ~
-               tag!(":") ~
-               tag!(":") ~
-               alt!(tag!("B") | tag!("b")) ~
-               alt!(tag!("O") | tag!("o")) ~
-               alt!(tag!("O") | tag!("o")) ~
-               alt!(tag!("L") | tag!("l")),
-               || {
+       do_parse!(
+               tag!("$") >>
+               n: string_literal >>
+               tag!(":") >>
+               tag!(":") >>
+               alt!(tag!("B") | tag!("b")) >>
+               alt!(tag!("O") | tag!("o")) >>
+               alt!(tag!("O") | tag!("o")) >>
+               alt!(tag!("L") | tag!("l")) >>
+               ({
                   use std::env;
                   if let Ok(value) = env::var(&n) {
                     if let IResult::Done(_, output) = bool_true_value(value.as_bytes()) {
@@ -426,7 +419,7 @@ named!(bool_env_value<&[u8], ScalarValue>,
                   } else {
                     ScalarValue::Boolean(false)
                   }
-                } ));
+                })));
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ String parser and auxiliary parsers ~~~
@@ -434,51 +427,43 @@ named!(bool_env_value<&[u8], ScalarValue>,
 named!(str_scalar_value<&[u8], ScalarValue>, alt!(string_scalar_value | string_env_value));
 
 named!(string_scalar_value<&[u8], ScalarValue>,
-       chain!(
-           strs: many1!(chain!(
-                        s: string_literal ~
-                        blanks?,
-                        || { s })),
-           || {
-               ScalarValue::Str(
+       do_parse!(
+           strs: many1!(do_parse!(
+                        s: string_literal >>
+                        opt!(blanks) >>
+                        (s))) >>
+           (ScalarValue::Str(
                    strs.into_iter().fold(String::new(), |mut accum, str_i| {
                        accum.push_str(&str_i[..]);
                        accum
-                   }))}));
+                   })))));
 
-named!(not_escaped_seq<&[u8], &[u8]>, take_until_either!(&b"\\\""[..]));
-named!(escaped_seq, alt!(tag!("\\r") | tag!("\\n") | tag!("\\t") | tag!("\\\"") | tag!("\\\\")));
 named!(string_literal<&[u8], String>,
-       chain!(
-           tag!("\"") ~
-           s: many0!(map_res!(alt!(escaped_seq | not_escaped_seq), from_utf8)) ~
-           tag!("\""),
-           || {
-               str_lit(&s.into_iter().fold(String::new(),
-                                           |mut accum, slice| {
-                                               accum.push_str(slice);
-                                               accum
-                                           })[..])}));
+       do_parse!(
+           tag!("\"") >>
+           s: map_res!(escaped!(none_of!(b"\\\""), b'\\', one_of!(b"rnt\"\\")), from_utf8)  >>
+           tag!("\"") >>
+           (str_lit(s))));
 
 // Special string parser with syntax $"ENV_VAR_NAME"::str which returns the environment
 // variable $ENV_VAR_NAME without any modifications.
 named!(string_env_value<&[u8], ScalarValue>,
-       chain!(
-               tag!("$") ~
-               n: string_literal ~
-               tag!(":") ~
-               tag!(":") ~
-               alt!(tag!("S") | tag!("s")) ~
-               alt!(tag!("T") | tag!("t")) ~
-               alt!(tag!("R") | tag!("r")),
-               || {
+       do_parse!(
+               tag!("$") >>
+               n: string_literal >>
+               tag!(":") >>
+               tag!(":") >>
+               alt!(tag!("S") | tag!("s")) >>
+               alt!(tag!("T") | tag!("t")) >>
+               alt!(tag!("R") | tag!("r")) >>
+               ({
                   use std::env;
                   if let Ok(value) = env::var(&n) {
                     ScalarValue::Str(value)
                   } else {
                     ScalarValue::Str("".to_string())
                   }
-                } ));
+                })));
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Integer values parser and auxiliary parsers ~~~
@@ -490,26 +475,26 @@ named!(int_scalar_value<&[u8], ScalarValue>,
 // Returns an `Err` if `parse::<i32>()` fails
 // [+-][0-9]+
 named!(int32_scalar_value_tentative<&[u8], Result<i32, <i32 as FromStr>::Err> >,
-       chain!(
-           s: map_res!(alt!(tag!("+") | tag!("-")), from_utf8)? ~
-           v: map_res!(digit, from_utf8),
-           || {
+       do_parse!(
+           s: opt!(map_res!(alt!(tag!("+") | tag!("-")), from_utf8)) >>
+           v: map_res!(digit, from_utf8) >>
+           ({
                // Rust's parse::<i32>() and i64 do not accept a leading '+'
                let sign = if s.unwrap_or("+") == "+" { "" } else { "-" };
-               (&format!("{}{}", sign, v)[..]).parse::<i32>()}));
+               (&format!("{}{}", sign, v)[..]).parse::<i32>()})));
 
 // Tentative parser to match Integer64 scalar values
 // Returns an `Err` if `parse::<i64>()` fails
 // [+-][0-9]+L
 named!(int64_scalar_value_tentative<&[u8], Result<i64, <i64 as FromStr>::Err> >,
-       chain!(
-           s: map_res!(alt!(tag!("+") | tag!("-")), from_utf8)? ~
-           v: map_res!(digit, from_utf8) ~
-           tag!("L"),
-           || {
+       do_parse!(
+           s: opt!(map_res!(alt!(tag!("+") | tag!("-")), from_utf8)) >>
+           v: map_res!(digit, from_utf8) >>
+           tag!("L") >>
+           ({
                // Rust's parse::<i32>() and i64 do not accept a leading '+'
                let sign = if s.unwrap_or("+") == "+" { "" } else { "-" };
-               (&format!("{}{}", sign, v)[..]).parse::<i64>()}));
+               (&format!("{}{}", sign, v)[..]).parse::<i64>()})));
 
 // Transforms a possible `Err` returned by `parse::<i32>()` into a parse `Error`
 named!(int32_scalar_value<&[u8], ScalarValue>,
@@ -530,15 +515,15 @@ named!(int64_scalar_value<&[u8], ScalarValue>,
 // We do a little hack here to avoid double codding; we call int32_scalar_value and int64_scalar_value directly
 // on the value of the environment variable and iterpret the return value.
 named!(int_env_value<&[u8], ScalarValue>,
-       chain!(
-             tag!("$") ~
-             n: string_literal ~
-             tag!(":") ~
-             tag!(":") ~
-             alt!(tag!("I") | tag!("i")) ~
-             alt!(tag!("N") | tag!("n")) ~
-             alt!(tag!("T") | tag!("t")),
-             || {
+       do_parse!(
+             tag!("$") >>
+             n: string_literal >>
+             tag!(":") >>
+             tag!(":") >>
+             alt!(tag!("I") | tag!("i")) >>
+             alt!(tag!("N") | tag!("n")) >>
+             alt!(tag!("T") | tag!("t")) >>
+             ({
                 use std::env;
                 if let Ok(value) = env::var(&n) {
                   if let IResult::Done(_, output) = int64_scalar_value(value.as_bytes()) {
@@ -551,7 +536,7 @@ named!(int_env_value<&[u8], ScalarValue>,
                 } else {
                     ScalarValue::Integer32(0i32)
                 }
-              } ));
+              })));
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Floating point values parser and auxiliary parsers ~~~
@@ -564,19 +549,19 @@ named!(flt_scalar_value<&[u8], ScalarValue>,
 // Auxiliary parser for floats with digits before .
 // [0-9]+\.[0-9]*
 named!(flt_base_w_digits_bef_dot<&[u8], (&str, &str)>,
-       chain!(
-           b: map_res!(digit, from_utf8) ~
-           tag!(".") ~
-           a: map_res!(digit, from_utf8)?,
-           || { (b, a.unwrap_or("")) }));
+       do_parse!(
+           b: map_res!(digit, from_utf8) >>
+           tag!(".") >>
+           a: opt!(map_res!(complete!(digit), from_utf8)) >>
+           (b, a.unwrap_or(""))));
 
 // Auxiliary parser for floats with no digits before .
 // \.[0-9]+
 named!(flt_base_no_digits_bef_dot<&[u8], (&str, &str)>,
-       chain!(
-           tag!(".") ~
-           a: map_res!(digit, from_utf8),
-           || { ("", a) }));
+       do_parse!(
+           tag!(".") >>
+           a: map_res!(digit, from_utf8) >>
+           ("", a)));
 
 // Auxiliary parser to match the base of a float
 // [0-9]+\.[0-9]* | \.[0-9]+
@@ -586,44 +571,46 @@ named!(flt_base<&[u8], (&str, &str)>,
 // Auxiliary parser to match the exponent of a float
 // [eE][+-]?[0-9]+
 named!(flt_exponent<&[u8], (&str, &str)>,
-       chain!(
-           alt!(tag!("e") | tag!("E")) ~
-           s: map_res!(alt!(tag!("+") | tag!("-")), from_utf8)? ~
-           v: map_res!(digit, from_utf8),
-           || { (s.unwrap_or("+"), v) }));
+       do_parse!(
+           alt!(tag!("e") | tag!("E")) >>
+           s: opt!(map_res!(alt!(tag!("+") | tag!("-")), from_utf8)) >>
+           v: map_res!(digit, from_utf8) >>
+           (s.unwrap_or("+"), v)));
 
 // Tentative parser to match Floating32 scalar values
 // Returns an `Err` if `parse::<f32>()` fails
 // [+-]?([0-9]+\.[0-9]* | \.[0-9]+)([eE][+-]?[0-9]+)?
 named!(flt32_scalar_value_tentative<&[u8], Result<f32, <f32 as FromStr>::Err> >,
-       chain!(
-           s: map_res!(alt!(tag!("+") | tag!("-")), from_utf8)? ~
-           b: flt_base ~
-           e: complete!(flt_exponent)?,
-           || {
+       do_parse!(
+           s: opt!(map_res!(alt!(tag!("+") | tag!("-")), from_utf8)) >>
+           b: flt_base >>
+           e: opt!(complete!(flt_exponent)) >>
+           ({
                let (base_bef, base_after) = b;
                let (exp_sign, exp_val) = e.unwrap_or(("+", "0"));
                // Rust's parse::<f32>() and f64 do not accept a leading '+'
                let sign = if s.unwrap_or("+") == "+" { "" } else { "-" };
                (&format!("{}{}.{}e{}{}", sign, base_bef, base_after,
-                         exp_sign, exp_val)[..]).parse::<f32>()}));
+                         exp_sign, exp_val)[..]).parse::<f32>()
+           })));
 
 // Tentative parser to match Floating64 scalar values
 // Returns an Err if parse::<f64>() fails
 // [+-]?([0-9]+\.[0-9]* | \.[0-9]+)([eE][+-]?[0-9]+)?L
 named!(flt64_scalar_value_tentative<&[u8], Result<f64, <f64 as FromStr>::Err> >,
-       chain!(
-           s: map_res!(alt!(tag!("+") | tag!("-")), from_utf8)? ~
-           b: flt_base ~
-           e: flt_exponent? ~
-           tag!("L"),
-           || {
+       do_parse!(
+           s: opt!(map_res!(alt!(tag!("+") | tag!("-")), from_utf8)) >>
+           b: flt_base >>
+           e: opt!(flt_exponent) >>
+           tag!("L") >>
+           ({
                let (base_bef, base_after) = b;
                let (exp_sign, exp_val) = e.unwrap_or(("+", "0"));
                // Rust's parse::<f32>() and f64 do not accept a leading '+'
                let sign = if s.unwrap_or("+") == "+" { "" } else { "-" };
                (&format!("{}{}.{}e{}{}", sign, base_bef, base_after,
-                         exp_sign, exp_val)[..]).parse::<f64>()}));
+                         exp_sign, exp_val)[..]).parse::<f64>()
+           })));
 
 // Transforms a possible `Err` returned by `parse::<f32>()` into a parse `Error`
 named!(flt32_scalar_value<&[u8], ScalarValue>,
@@ -641,19 +628,19 @@ named!(flt64_scalar_value<&[u8], ScalarValue>,
 
 // Special Float parser with syntax $"ENV_VAR_NAME"::flt which assumes the environment
 // variable $ENV_VAR_NAME as Floating and try to parse it. On parsing error it returns Floating32(0).
-// We do a little hack here to avoid double codding; we call flt32_scalar_value and flt64_scalar_value directly 
+// We do a little hack here to avoid double codding; we call flt32_scalar_value and flt64_scalar_value directly
 // on the value of the environment variable and iterpret the return value.
 // TODO(filipegoncalves) Generate errors if something fails
 named!(flt_env_value<&[u8], ScalarValue>,
-       chain!(
-             tag!("$") ~
-             n: string_literal ~
-             tag!(":") ~
-             tag!(":") ~
-             alt!(tag!("F") | tag!("f")) ~
-             alt!(tag!("L") | tag!("l")) ~
-             alt!(tag!("T") | tag!("t")),
-             || {
+       do_parse!(
+             tag!("$") >>
+             n: string_literal >>
+             tag!(":") >>
+             tag!(":") >>
+             alt!(tag!("F") | tag!("f")) >>
+             alt!(tag!("L") | tag!("l")) >>
+             alt!(tag!("T") | tag!("t")) >>
+             ({
                 use std::env;
                 if let Ok(value) = env::var(&n) {
                     if let IResult::Done(_, output) = flt64_scalar_value(value.as_bytes()) {
@@ -666,24 +653,24 @@ named!(flt_env_value<&[u8], ScalarValue>,
                 } else {
                     ScalarValue::Floating32(0f32)
                 }
-             }));
+             })));
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Auto type environment variable parser ~~~
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 named!(auto_env_scalar_value<&[u8], ScalarValue>,
-       chain!(
-             tag!("$") ~
-             n: string_literal ~
-             opt!(chain!(
-                        tag!(":") ~
-                        tag!(":") ~
-                        alt!(tag!("A") | tag!("a")) ~
-                        alt!(tag!("U") | tag!("u")) ~
-                        alt!(tag!("T") | tag!("t")) ~
-                        alt!(tag!("O") | tag!("o")),
-                        || {} )),
-             || {
+       do_parse!(
+             tag!("$") >>
+             n: string_literal >>
+             opt!(do_parse!(
+                        tag!(":") >>
+                        tag!(":") >>
+                        alt!(tag!("A") | tag!("a")) >>
+                        alt!(tag!("U") | tag!("u")) >>
+                        alt!(tag!("T") | tag!("t")) >>
+                        alt!(tag!("O") | tag!("o")) >>
+                        ())) >>
+             ({
                 use std::env;
                 // TODO(filipegoncalves) Handle error case
                 // NOTE(workanator) I think that is the proper implementation on the parser which
@@ -708,15 +695,12 @@ named!(auto_env_scalar_value<&[u8], ScalarValue>,
                 } else {
                     ScalarValue::Str("".to_string())
                 }
-              } ));
+              })));
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Parser to ignore useless stuff: comments, new lines, ... ~~~
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-named!(blanks,
-       chain!(
-           many0!(alt!(multispace | comment_one_line | comment_block)),
-           || { &b""[..] }));
+named!(blanks, map!(many0!(alt!(multispace | comment_one_line | comment_block)), |_| { &b""[..] }));
 
 // Auxiliary parser to ignore newlines
 // NOTE: In some cases, this parser is combined with others that use `not_line_ending`
@@ -726,18 +710,18 @@ named!(eol,
 
 // Auxiliary parser to ignore one-line comments
 named!(comment_one_line,
-       chain!(
-           alt!(tag!("//") | tag!("#")) ~
-           not_line_ending? ~
-           alt!(eof | eol),
-           || { &b""[..] }));
+       do_parse!(
+           alt!(tag!("//") | tag!("#")) >>
+           opt!(not_line_ending) >>
+           alt!(eof!() | eol) >>
+           (&b""[..])));
 
 // Auxiliary parser to ignore block comments
 named!(comment_block,
-       chain!(
-           tag!("/*") ~
-           take_until_and_consume!(&b"*/"[..]),
-           || { &b""[..] }));
+       do_parse!(
+           tag!("/*") >>
+           take_until_and_consume!(&b"*/"[..]) >>
+           (&b""[..])));
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ End of parsers section ~~~
@@ -882,7 +866,7 @@ fn str_lit(lit: &str) -> String {
 #[cfg(test)]
 mod test {
     use super::{setting_name, setting, settings_list};
-    use super::{escaped_seq, not_escaped_seq, string_literal, str_scalar_value};
+    use super::{string_literal, str_scalar_value};
     use super::{eol, comment_one_line, comment_block, blanks};
     use super::{flt_base_w_digits_bef_dot, flt_base_no_digits_bef_dot, flt_base, flt_exponent};
     use super::{flt32_scalar_value, flt64_scalar_value, flt_scalar_value, auto_env_scalar_value};
@@ -895,7 +879,6 @@ mod test {
     use super::conf;
 
     use nom::ErrorKind;
-    use nom::Err::Position;
     use nom::IResult::*;
 
     use types::{Setting, SettingsList, Value, ScalarValue, Config};
@@ -940,14 +923,14 @@ mod test {
     fn setting_name_bad_num_prefix() {
         let a_setting = &b"12_xxx"[..];
         let res = setting_name(a_setting);
-        assert_eq!(res, Error(Position(ErrorKind::Alpha, &b"12_xxx"[..])));
+        assert_eq!(res, Error(ErrorKind::Alpha));
     }
 
     #[test]
     fn setting_name_bad_symbol_prefix() {
         let a_setting = &b"__not_allowed"[..];
         let res = setting_name(a_setting);
-        assert_eq!(res, Error(Position(ErrorKind::Alpha, &b"__not_allowed"[..])));
+        assert_eq!(res, Error(ErrorKind::Alpha));
     }
 
     #[test]
@@ -1035,73 +1018,10 @@ mod test {
     }
 
     #[test]
-    fn not_escaped_sequence() {
-        let a_sequence = &b"a regular string without escaped sequences\""[..];
-        let res = not_escaped_seq(a_sequence);
-        assert_eq!(res, Done(&b"\""[..], &a_sequence[..a_sequence.len()-1]));
-    }
-
-    #[test]
-    fn not_escaped_sequence2() {
-        let a_sequence = &b"a string with \\t an escape\""[..];
-        let res = not_escaped_seq(a_sequence);
-        assert_eq!(res, Done(&b"\\t an escape\""[..], &a_sequence[0..14]));
-    }
-
-    #[test]
-    fn not_escaped_sequence3() {
-        let a_sequence = &b"\\nthis time we started with a newline\""[..];
-        let res = not_escaped_seq(a_sequence);
-        assert_eq!(res, Done(a_sequence, &b""[..]));
-    }
-
-    #[test]
-    fn not_escaped_sequence4() {
-        let a_sequence = &b"\""[..];
-        let res = not_escaped_seq(a_sequence);
-        assert_eq!(res, Done(a_sequence, &b""[..]));
-    }
-
-    #[test]
-    fn escaped_sequence1() {
-        let an_escaped_seq = &b"\\t"[..];
-        let res = escaped_seq(an_escaped_seq);
-        assert_eq!(res, Done(&b""[..], an_escaped_seq));
-    }
-
-    #[test]
-    fn escaped_sequence2() {
-        let an_escaped_seq = &b"\\\\"[..];
-        let res = escaped_seq(an_escaped_seq);
-        assert_eq!(res, Done(&b""[..], an_escaped_seq));
-    }
-
-    #[test]
-    fn escaped_sequence3() {
-        let an_escaped_seq = &b"\\\"test"[..];
-        let res = escaped_seq(an_escaped_seq);
-        assert_eq!(res, Done(&b"test"[..], &an_escaped_seq[0..2]));
-    }
-
-    #[test]
-    fn bad_escape_sequence1() {
-        let bad_escaped_seq = &b"\\q"[..];
-        let res = escaped_seq(bad_escaped_seq);
-        assert_eq!(res, Error(Position(ErrorKind::Alt, &b"\\q"[..])));
-    }
-
-    #[test]
-    fn bad_escape_sequence2() {
-        let bad_escape_seq = &b"aaa"[..];
-        let res = escaped_seq(bad_escape_seq);
-        assert_eq!(res, Error(Position(ErrorKind::Alt, &b"aaa"[..])));
-    }
-
-    #[test]
     fn empty_str_lit() {
         let input = &b"\"\""[..];
         let res = string_literal(input);
-        assert_eq!(res, Done(&b""[..], String::new()));        
+        assert_eq!(res, Done(&b""[..], String::new()));
     }
 
     #[test]
@@ -1145,6 +1065,13 @@ mod test {
         let res = string_literal(input);
         assert_eq!(res, Done(&b""[..],
                              "escaped_str=\"Just a \\\"test\\\" with escapes.\";".to_string()));
+    }
+
+    #[test]
+    fn str_lit_with_escape6() {
+        let input = &b"\"\\nthis time we started with a newline\""[..];
+        let res = string_literal(input);
+        assert_eq!(res, Done(&b""[..], "\nthis time we started with a newline".to_string()));
     }
 
     #[test]
@@ -1207,7 +1134,7 @@ mod test {
     fn end_of_line1() {
         let input = &b"a test\n"[..];
         let res = eol(input);
-        assert_eq!(res, Error(Position(ErrorKind::Alt, &b"a test\n"[..])));
+        assert_eq!(res, Error(ErrorKind::Alt));
     }
 
     #[test]
@@ -1235,7 +1162,7 @@ mod test {
     fn one_line_comment_bad() {
         let input = &b"not a comment // see?"[..];
         let res = comment_one_line(input);
-        assert_eq!(res, Error(Position(ErrorKind::Alt, &b"not a comment // see?"[..])));
+        assert_eq!(res, Error(ErrorKind::Alt));
     }
 
     #[test]
@@ -1270,7 +1197,7 @@ mod test {
     fn comment_blk_bad() {
         let input = &b"not a comment /* see?"[..];
         let res = comment_block(input);
-        assert_eq!(res, Error(Position(ErrorKind::Tag, &b"not a comment /* see?"[..])));
+        assert_eq!(res, Error(ErrorKind::Tag));
     }
 
     #[test]
@@ -1370,7 +1297,7 @@ mod test {
     fn flt_base_w_digits_before_dot() {
         let input = &b".4435"[..];
         let res = flt_base_w_digits_bef_dot(input);
-        assert_eq!(res, Error(Position(ErrorKind::Digit, &b".4435"[..])));
+        assert_eq!(res, Error(ErrorKind::Digit));
     }
 
     #[test]
@@ -1412,7 +1339,7 @@ mod test {
     fn flt_base_no_digits_before_dot() {
         let input = &b"0.0"[..];
         let res = flt_base_no_digits_bef_dot(input);
-        assert_eq!(res, Error(Position(ErrorKind::Tag, &b"0.0"[..])));
+        assert_eq!(res, Error(ErrorKind::Tag));
     }
 
     #[test]
@@ -1426,7 +1353,7 @@ mod test {
     fn flt_base_no_digits_before_dot3() {
         let input = &b".\n"[..];
         let res = flt_base_no_digits_bef_dot(input);
-        assert_eq!(res, Error(Position(ErrorKind::Digit, &b"\n"[..] /* dot is consumed */)));
+        assert_eq!(res, Error(ErrorKind::Digit));
     }
 
     #[test]
@@ -1489,7 +1416,7 @@ mod test {
     fn flt_exponent_value() {
         let input = &b"eee"[..];
         let res = flt_exponent(input);
-        assert_eq!(res, Error(Position(ErrorKind::Digit, &b"ee"[..] /* one e consumed */)));
+        assert_eq!(res, Error(ErrorKind::Digit));
     }
 
     #[test]
@@ -1804,7 +1731,7 @@ mod test {
     fn integer_scalar_value() {
         let input = &b"-------"[..];
         let res = int_scalar_value(input);
-        assert_eq!(res, Error(Position(ErrorKind::Alt, &b"-------"[..])));
+        assert_eq!(res, Error(ErrorKind::Alt));
     }
 
     #[test]
@@ -2101,14 +2028,14 @@ mod test {
     fn bad_array() {
         let input = &b"[true, \"a\", 14, 19, 5.0e1];\n"[..];
         let res = array(input);
-        assert_eq!(res, Error(Position(ErrorKind::Alt, &b"[true, \"a\", 14, 19, 5.0e1];\n"[..])));
+        assert_eq!(res, Error(ErrorKind::Alt));
     }
 
     #[test]
     fn bad_array2() {
         let input = &b"[\"a bad array\", 12, 3.0e-1, true];\n"[..];
         let res = array(input);
-        assert_eq!(res, Error(Position(ErrorKind::Alt, &b"[\"a bad array\", 12, 3.0e-1, true];\n"[..])));
+        assert_eq!(res, Error(ErrorKind::Alt));
     }
 
     #[test]
@@ -2468,7 +2395,7 @@ mod test {
         expected.insert("num__".to_string(),
                         Setting::new("num__".to_string(),
                                      Value::Svalue(ScalarValue::Floating32(2.0e+2))));
-          
+
       assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
     }
 
@@ -2731,21 +2658,21 @@ mod test {
     fn conf_simple_bad_array() {
         let input = b"bad_array = [\"a bad array\", 12, 3.0e-1, true];\n";
         let parsed = conf(&input[..]);
-        assert_eq!(parsed, Error(Position(ErrorKind::Eof, &input[..])));
+        assert_eq!(parsed, Error(ErrorKind::Eof));
     }
 
     #[test]
     fn conf_bad_array() {
         let input = b"bad_array = [\"a bad array\", (\"array\", 5, 4, 2)];\n";
         let parsed = conf(&input[..]);
-        assert_eq!(parsed, Error(Position(ErrorKind::Eof, &input[..])));
+        assert_eq!(parsed, Error(ErrorKind::Eof));
     }
 
     #[test]
     fn conf_bad_array_not_scalar() {
         let input = b"bad_array = [(1, 2, 3), (4, 5, 6)];\n";
         let parsed = conf(&input[..]);
-        assert_eq!(parsed, Error(Position(ErrorKind::Eof, &input[..])));
+        assert_eq!(parsed, Error(ErrorKind::Eof));
     }
 
     #[test]

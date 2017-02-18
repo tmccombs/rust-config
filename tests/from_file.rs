@@ -1,10 +1,10 @@
-extern crate config;
+extern crate libconfig;
 
 use std::path::Path;
 
-use config::reader;
-use config::types::Value;
-use config::types::ScalarValue;
+use libconfig::reader;
+use libconfig::types::Value;
+use libconfig::types::ScalarValue;
 
 #[test]
 fn conf_from_file() {

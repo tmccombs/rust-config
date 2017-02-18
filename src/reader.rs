@@ -23,7 +23,7 @@ use error::{from_io_err, from_parse_err};
 ///
 /// ```
 /// use std::io::Cursor;
-/// use config::reader::from_stream;
+/// use libconfig::reader::from_stream;
 ///
 /// let sample_conf = "windows=NO;\nlinux = YES;\n";
 /// let mut cursor = Cursor::new(sample_conf.as_bytes());
@@ -35,8 +35,8 @@ use error::{from_io_err, from_parse_err};
 ///
 /// ```
 /// use std::io::Cursor;
-/// use config::reader::from_stream;
-/// use config::error::ConfigErrorKind;
+/// use libconfig::reader::from_stream;
+/// use libconfig::error::ConfigErrorKind;
 ///
 /// let sample_conf = "windows=\n";
 /// let mut cursor = Cursor::new(sample_conf.as_bytes());
@@ -55,8 +55,8 @@ use error::{from_io_err, from_parse_err};
 /// use std::io::Result as IoResult;
 /// use std::io::ErrorKind;
 ///
-/// use config::reader::from_stream;
-/// use config::error::ConfigErrorKind;
+/// use libconfig::reader::from_stream;
+/// use libconfig::error::ConfigErrorKind;
 ///
 /// struct BadCursor;
 ///
@@ -95,7 +95,7 @@ pub fn from_stream<T: Read>(stream: &mut T) -> Result<Config, ConfigError> {
 /// ```
 /// use std::path::Path;
 ///
-/// use config::reader::from_file;
+/// use libconfig::reader::from_file;
 ///
 /// let parsed = from_file(Path::new("tests/sample.conf"));
 /// assert!(parsed.is_ok());
@@ -114,8 +114,8 @@ pub fn from_file(path: &Path) -> Result<Config, ConfigError> {
 /// # Examples
 ///
 /// ```
-/// use config::reader::from_str;
-/// use config::error::ConfigErrorKind;
+/// use libconfig::reader::from_str;
+/// use libconfig::error::ConfigErrorKind;
 ///
 /// let parsed = from_str("windows=NO;\nlinux=true;\n");
 /// assert!(parsed.is_ok());
@@ -124,8 +124,8 @@ pub fn from_file(path: &Path) -> Result<Config, ConfigError> {
 /// This will return a syntax error (missing a semi-colon)
 ///
 /// ```
-/// use config::reader::from_str;
-/// use config::error::ConfigErrorKind;
+/// use libconfig::reader::from_str;
+/// use libconfig::error::ConfigErrorKind;
 ///
 /// let parsed = from_str("windows=NO\n");
 /// assert!(parsed.is_err());

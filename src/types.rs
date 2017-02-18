@@ -95,7 +95,7 @@ impl Config {
     /// Here's a small demonstration:
     ///
     /// ```
-    /// use config::reader::from_str;
+    /// use libconfig::reader::from_str;
     ///
     /// let my_conf = from_str("my_string = \"hello\"; a_list = ([1, 2, 3], true, { x = 4; }, \"good_bye\");").unwrap();
     ///
@@ -300,9 +300,9 @@ impl Setting {
     /// We start by creating a `ScalarValue`:
     ///
     /// ```
-    /// use config::types::ScalarValue;
-    /// # use config::types::Value;
-    /// # use config::types::Setting;
+    /// use libconfig::types::ScalarValue;
+    /// # use libconfig::types::Value;
+    /// # use libconfig::types::Setting;
     ///
     /// let setting_scalarvalue = ScalarValue::Integer32(1);
     /// # let setting_value = Value::Svalue(setting_scalarvalue);
@@ -313,9 +313,9 @@ impl Setting {
     /// Then, we wrap it into a `Value`, because settings store generic values:
     ///
     /// ```
-    /// # use config::types::ScalarValue;
-    /// use config::types::Value;
-    /// # use config::types::Setting;
+    /// # use libconfig::types::ScalarValue;
+    /// use libconfig::types::Value;
+    /// # use libconfig::types::Setting;
     ///
     /// # let setting_scalarvalue = ScalarValue::Integer32(1);
     /// let setting_value = Value::Svalue(setting_scalarvalue);
@@ -326,9 +326,9 @@ impl Setting {
     /// And then we choose a name for our setting and create it:
     ///
     /// ```
-    /// # use config::types::ScalarValue;
-    /// # use config::types::Value;
-    /// use config::types::Setting;
+    /// # use libconfig::types::ScalarValue;
+    /// # use libconfig::types::Value;
+    /// use libconfig::types::Setting;
     ///
     /// # let setting_scalarvalue = ScalarValue::Integer32(1);
     /// # let setting_value = Value::Svalue(setting_scalarvalue);
@@ -339,9 +339,9 @@ impl Setting {
     /// Here's the complete example:
     ///
     /// ```
-    /// use config::types::ScalarValue;
-    /// use config::types::Value;
-    /// use config::types::Setting;
+    /// use libconfig::types::ScalarValue;
+    /// use libconfig::types::Value;
+    /// use libconfig::types::Setting;
     ///
     /// let setting_scalarvalue = ScalarValue::Integer32(1);
     /// let setting_value = Value::Svalue(setting_scalarvalue);
