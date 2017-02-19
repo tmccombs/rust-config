@@ -9,7 +9,7 @@ use ::error::ConfigError;
 #[derive(PartialEq)]
 #[derive(Debug)]
 pub struct Config {
-    root: Value
+    _root: Value
 }
 
 /// Settings list representation. Associates settings to their names.
@@ -69,7 +69,12 @@ pub type ListValue = Vec<Value>;
 impl Config {
     /// Creates a new wrapper `Config` to hold a `SettingsList`
     pub fn new(sl: SettingsList) -> Config {
-        Config { root: Value::Group(sl) }
+        Config { _root: Value::Group(sl) }
+    }
+
+    /// Get the root value of the config
+    pub fn root(&self) -> &Value {
+        &self._root
     }
 
     /// Looks up a value in a configuration. A path is a dot-separated list of settings
@@ -108,7 +113,7 @@ impl Config {
     /// ```
     ///
     pub fn lookup(&self, path: &str) -> Option<&Value> {
-        let mut last_value = &self.root;
+        let mut last_value = &self._root;
         for segment in path.split(".") {
             if segment.starts_with("[") {
                 if !segment.ends_with("]") || segment.len() < 3 {
@@ -292,7 +297,7 @@ impl FromStr for Config {
 
 impl Setting {
     /// Creates a new setting with a given name and value
-    /// # Examples 
+    /// # Examples
     /// Let's say we want to create a setting to store an `i32`.
     /// We start by creating a `ScalarValue`:
     ///
