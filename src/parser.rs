@@ -178,25 +178,26 @@ pub fn parse(config: &str) -> Result<Config, ParseError> {
 // ~~~~~~~~~~~~~~~~~~~~~~~~
 named!(conf<&[u8], Config>,
        do_parse!(
-           c: alt_complete!(
-               settings_list => {|l|  Config::new(l)} |
-               blanks => {|_| Config::new(SettingsList::new()) }) >>
+           l: settings_list >>
            eof!() >>
-           (c)));
+           (Config::new(l))));
 
 // ~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Settings List ~~~
 // ~~~~~~~~~~~~~~~~~~~~~
 named!(settings_list<&[u8], SettingsList>,
-       map_res!(settings_list_elems,
-                |s: Vec<Setting>| -> Result<SettingsList, ()> {
-                    let mut res = SettingsList::new();
-                    for setting in s.into_iter() {
-                        res.insert(setting.name.clone(), setting);
-                    }
-                    Ok(res) }));
+       do_parse!(
+           opt!(blanks) >>
+           s: settings_list_elems >>
+           ({
+               let mut res = SettingsList::new();
+               for setting in s.into_iter() {
+                   res.insert(setting.name.clone(), setting);
+               }
+               res
+           })));
 
-named!(settings_list_elems<&[u8], Vec<Setting> >, many1!(setting));
+named!(settings_list_elems<&[u8], Vec<Setting> >, many0!(setting));
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Setting parser and auxiliary parsers ~~~
@@ -1015,6 +1016,15 @@ mod test {
                                      Value::Svalue(ScalarValue::Str("bye".to_string()))));
 
         assert_eq!(res, Done(&b""[..], expected));
+    }
+
+    #[test]
+    fn blank_settings_list() {
+        let settings = &b"   \n//comment\n/**\n*/\n"[..];
+        let res = settings_list(settings);
+
+        let expected = SettingsList::new();
+        assert_eq!(res, Done(&b""[..], expected))
     }
 
     #[test]
@@ -2195,6 +2205,24 @@ mod test {
                    Setting::new("y".to_string(), Value::Svalue(ScalarValue::Integer32(2))));
 
         assert_eq!(res, Done(&b";"[..], Value::Group(grp)));
+    }
+
+    #[test]
+    fn empty_group() {
+        let a_group = &b"{}"[..];
+        let res = group(a_group);
+
+        let grp = SettingsList::new();
+        assert_eq!(res, Done(&b""[..], grp));
+    }
+
+    #[test]
+    fn blank_group() {
+        let a_group = &b"{  \n\t//comment\n}"[..];
+        let res = group(a_group);
+
+        let grp = SettingsList::new();
+        assert_eq!(res, Done(&b""[..], grp));
     }
 
     #[test]
