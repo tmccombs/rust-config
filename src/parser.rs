@@ -147,14 +147,12 @@
 //!
 
 use std::str;
-use std::str::from_utf8;
 use std::str::FromStr;
-use std::iter;
 
 use types::{SettingsList, Setting, Value, ScalarValue, ArrayValue, ListValue, Config};
 
 use nom::{alpha, alphanumeric, digit, multispace, not_line_ending};
-use nom::IResult;
+use nom::{IResult, Needed};
 use nom::IResult::*;
 
 pub type ParseError = u32;
@@ -163,7 +161,7 @@ pub type ParseError = u32;
 /// An error is returned in case of syntax error.
 pub fn parse(config: &str) -> Result<Config, ParseError> {
     // TODO Descriptive errors
-    match conf(&config.as_bytes()[..]) {
+    match conf(config) {
         Done(_, c) => Ok(c),
         _          => Err(0)
     }
@@ -176,7 +174,7 @@ pub fn parse(config: &str) -> Result<Config, ParseError> {
 // ~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Top-level parser ~~~
 // ~~~~~~~~~~~~~~~~~~~~~~~~
-named!(conf<&[u8], Config>,
+named!(conf<&str, Config>,
        do_parse!(
            l: settings_list >>
            eof!() >>
@@ -185,7 +183,7 @@ named!(conf<&[u8], Config>,
 // ~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Settings List ~~~
 // ~~~~~~~~~~~~~~~~~~~~~
-named!(settings_list<&[u8], SettingsList>,
+named!(settings_list<&str, SettingsList>,
        do_parse!(
            opt!(blanks) >>
            s: settings_list_elems >>
@@ -197,12 +195,12 @@ named!(settings_list<&[u8], SettingsList>,
                res
            })));
 
-named!(settings_list_elems<&[u8], Vec<Setting> >, many0!(setting));
+named!(settings_list_elems<&str, Vec<Setting> >, many0!(setting));
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Setting parser and auxiliary parsers ~~~
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-named!(setting<&[u8], Setting>,
+named!(setting<&str, Setting>,
        do_parse!(
            opt!(blanks) >>
            name: setting_name >>
@@ -216,10 +214,10 @@ named!(setting<&[u8], Setting>,
            (Setting::new(name, v))));
 
 // Matches a setting name of the form [a-zA-Z][-a-zA-Z0-9_]*
-named!(setting_name<&[u8], String>,
+named!(setting_name<&str, String>,
        do_parse!(
-           h: map_res!(alpha, from_utf8) >>
-           t: many0!(map_res!(alt!(tag!("-") | tag!("_") | alphanumeric), from_utf8)) >>
+           h: alpha >>
+           t: many0!(alt!(tag!("-") | tag!("_") | alphanumeric)) >>
            (t.into_iter().fold(h.to_string(), |mut accum, slice| {
                accum.push_str(slice);
                accum
@@ -228,7 +226,7 @@ named!(setting_name<&[u8], String>,
 // ~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Values parser ~~~
 // ~~~~~~~~~~~~~~~~~~~~~
-named!(value<&[u8], Value>,
+named!(value<&str, Value>,
        alt!(
            map_res!(scalar_value, |sv| -> Result<Value, ()> { Ok(Value::Svalue(sv)) }) |
            array |
@@ -238,7 +236,7 @@ named!(value<&[u8], Value>,
 // ~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Scalar Values ~~~
 // ~~~~~~~~~~~~~~~~~~~~~
-named!(scalar_value<&[u8], ScalarValue>,
+named!(scalar_value<&str, ScalarValue>,
        alt!(
            boolean_scalar_value |
            flt_scalar_value |
@@ -249,7 +247,7 @@ named!(scalar_value<&[u8], ScalarValue>,
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Array parser and auxiliary parsers ~~~
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-named!(array<&[u8], Value>,
+named!(array<&str, Value>,
        alt!(
            do_parse!(tag!("[") >>
                      opt!(blanks) >>
@@ -288,7 +286,7 @@ named!(array<&[u8], Value>,
 
 macro_rules! array_elems {
     ($name:ident, $parser:ident) => (
-        named!($name<&[u8], ArrayValue>,
+        named!($name<&str, ArrayValue>,
                do_parse!(
                    opt!(blanks) >>
                    first: $parser >>
@@ -318,7 +316,7 @@ array_elems!(int32_array_elements, int32_scalar_value);
 // ~~~~~~~~~~~~~
 // ~~~ Lists ~~~
 // ~~~~~~~~~~~~~
-named!(list<&[u8], Value>,
+named!(list<&str, Value>,
        alt!(
            do_parse!(
                tag!("(") >>
@@ -348,7 +346,7 @@ named!(list<&[u8], Value>,
 // ~~~~~~~~~~~~~
 // ~~~ Group ~~~
 // ~~~~~~~~~~~~~
-named!(group<&[u8], SettingsList>,
+named!(group<&str, SettingsList>,
        do_parse!(
            tag!("{") >>
            l: settings_list >>
@@ -358,9 +356,9 @@ named!(group<&[u8], SettingsList>,
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Boolean values parser and auxiliary parsers ~~~
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-named!(boolean_scalar_value<&[u8], ScalarValue>, alt!(bool_true_value | bool_false_value | bool_env_value));
+named!(boolean_scalar_value<&str, ScalarValue>, alt!(bool_true_value | bool_false_value | bool_env_value));
 
-named!(bool_true_value<&[u8], ScalarValue>,
+named!(bool_true_value<&str, ScalarValue>,
        alt!(do_parse!(
                alt!(tag!("T") | tag!("t")) >>
                alt!(tag!("R") | tag!("r")) >>
@@ -377,7 +375,7 @@ named!(bool_true_value<&[u8], ScalarValue>,
                alt!(tag!("N") | tag!("n")) >>
                (ScalarValue::Boolean(true)))));
 
-named!(bool_false_value<&[u8], ScalarValue>,
+named!(bool_false_value<&str, ScalarValue>,
        alt!(do_parse!(
                alt!(tag!("F") | tag!("f")) >>
                alt!(tag!("A") | tag!("a")) >>
@@ -399,7 +397,7 @@ named!(bool_false_value<&[u8], ScalarValue>,
 // variable $ENV_VAR_NAME as boolean and try to parse it.
 // We do a little hack here to avoid double codding; we call bool_true_value directly
 // on the value of the environment variable and iterpret the return value.
-named!(bool_env_value<&[u8], ScalarValue>,
+named!(bool_env_value<&str, ScalarValue>,
        do_parse!(
                tag!("$") >>
                n: string_literal >>
@@ -412,7 +410,7 @@ named!(bool_env_value<&[u8], ScalarValue>,
                ({
                   use std::env;
                   if let Ok(value) = env::var(&n) {
-                    if let IResult::Done(_, output) = bool_true_value(value.as_bytes()) {
+                    if let IResult::Done(_, output) = bool_true_value(&value) {
                       output
                     } else {
                       ScalarValue::Boolean(false)
@@ -425,30 +423,57 @@ named!(bool_env_value<&[u8], ScalarValue>,
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ String parser and auxiliary parsers ~~~
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-named!(str_scalar_value<&[u8], ScalarValue>, alt!(string_scalar_value | string_env_value));
+named!(str_scalar_value<&str, ScalarValue>, alt!(string_scalar_value | string_env_value));
 
-named!(string_scalar_value<&[u8], ScalarValue>,
+named!(string_scalar_value<&str, ScalarValue>,
        do_parse!(
            strs: many1!(do_parse!(
                         s: string_literal >>
                         opt!(blanks) >>
                         (s))) >>
-           (ScalarValue::Str(
-                   strs.into_iter().fold(String::new(), |mut accum, str_i| {
-                       accum.push_str(&str_i[..]);
-                       accum
-                   })))));
+           (ScalarValue::Str(strs.into_iter().collect()))));
 
-named!(string_literal<&[u8], String>,
-       do_parse!(
-           tag!("\"") >>
-           s: map_res!(escaped!(none_of!(b"\\\""), b'\\', one_of!(b"rnt\"\\")), from_utf8)  >>
-           tag!("\"") >>
-           (str_lit(s))));
+
+fn string_literal(input: &str) -> IResult<&str, String> {
+    const INCOMPLETE: IResult<&'static str, String> = Incomplete(Needed::Unknown);
+
+    let mut res = String::new();
+    let mut chars = input.chars();
+
+    match chars.next() {
+        Some('"') => {},
+        None => return INCOMPLETE,
+        _ => return custom_error(input, 0)
+    };
+
+    loop {
+        match chars.next() {
+            Some('\\') => {
+                match escape_dispatch(chars) {
+                    Done(rest, ch_opt) => {
+                        chars = rest.chars();
+                        if let Some(ch) = ch_opt {
+                            res.push(ch);
+                        }
+                    },
+                    Incomplete(_) => return INCOMPLETE,
+                    Error(err) => return Error(err)
+                }
+            },
+            Some('"') => {
+                res.shrink_to_fit();
+                return Done(chars.as_str(), res);
+            },
+            // TODO:  push chunks instead of one char at at a time?
+            Some(c) => res.push(c),
+            None => return INCOMPLETE
+        };
+    }
+}
 
 // Special string parser with syntax $"ENV_VAR_NAME"::str which returns the environment
 // variable $ENV_VAR_NAME without any modifications.
-named!(string_env_value<&[u8], ScalarValue>,
+named!(string_env_value<&str, ScalarValue>,
        do_parse!(
                tag!("$") >>
                n: string_literal >>
@@ -469,43 +494,45 @@ named!(string_env_value<&[u8], ScalarValue>,
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Integer values parser and auxiliary parsers ~~~
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-named!(int_scalar_value<&[u8], ScalarValue>,
+named!(int_scalar_value<&str, ScalarValue>,
        alt!(int64_scalar_value | int32_scalar_value | int_env_value));
 
 // Tentative parser to match Integer32 scalar values
 // Returns an `Err` if `parse::<i32>()` fails
 // [+-][0-9]+
-named!(int32_scalar_value_tentative<&[u8], Result<i32, <i32 as FromStr>::Err> >,
+named!(int32_scalar_value_tentative<&str, Result<i32, <i32 as FromStr>::Err> >,
        do_parse!(
-           s: opt!(map_res!(alt!(tag!("+") | tag!("-")), from_utf8)) >>
-           v: map_res!(digit, from_utf8) >>
+           s: opt!(alt!(tag!("+") | tag!("-"))) >>
+           v: digit >>
            ({
                // Rust's parse::<i32>() and i64 do not accept a leading '+'
                let sign = if s.unwrap_or("+") == "+" { "" } else { "-" };
-               (&format!("{}{}", sign, v)[..]).parse::<i32>()})));
+               (&format!("{}{}", sign, v)[..]).parse::<i32>()
+           })));
 
 // Tentative parser to match Integer64 scalar values
 // Returns an `Err` if `parse::<i64>()` fails
 // [+-][0-9]+L
-named!(int64_scalar_value_tentative<&[u8], Result<i64, <i64 as FromStr>::Err> >,
+named!(int64_scalar_value_tentative<&str, Result<i64, <i64 as FromStr>::Err> >,
        do_parse!(
-           s: opt!(map_res!(alt!(tag!("+") | tag!("-")), from_utf8)) >>
-           v: map_res!(digit, from_utf8) >>
+           s: opt!(alt!(tag!("+") | tag!("-"))) >>
+           v: digit >>
            tag!("L") >>
            ({
                // Rust's parse::<i32>() and i64 do not accept a leading '+'
                let sign = if s.unwrap_or("+") == "+" { "" } else { "-" };
-               (&format!("{}{}", sign, v)[..]).parse::<i64>()})));
+               (&format!("{}{}", sign, v)[..]).parse::<i64>()
+           })));
 
 // Transforms a possible `Err` returned by `parse::<i32>()` into a parse `Error`
-named!(int32_scalar_value<&[u8], ScalarValue>,
+named!(int32_scalar_value<&str, ScalarValue>,
        map_res!(int32_scalar_value_tentative,
                 |r: Result<i32, <i32 as FromStr>::Err>| {
                     r.map(|v| ScalarValue::Integer32(v))
                 }));
 
 // Transforms a possible `Err` returned by `parse::<i64>()` into a parse `Error`
-named!(int64_scalar_value<&[u8], ScalarValue>,
+named!(int64_scalar_value<&str, ScalarValue>,
        map_res!(int64_scalar_value_tentative,
                 |r: Result<i64, <i64 as FromStr>::Err>| {
                     r.map(|v| ScalarValue::Integer64(v))
@@ -515,7 +542,7 @@ named!(int64_scalar_value<&[u8], ScalarValue>,
 // variable $ENV_VAR_NAME as Integer and try to parse it. On parsing error it returns Integer32(0).
 // We do a little hack here to avoid double codding; we call int32_scalar_value and int64_scalar_value directly
 // on the value of the environment variable and iterpret the return value.
-named!(int_env_value<&[u8], ScalarValue>,
+named!(int_env_value<&str, ScalarValue>,
        do_parse!(
              tag!("$") >>
              n: string_literal >>
@@ -527,9 +554,9 @@ named!(int_env_value<&[u8], ScalarValue>,
              ({
                 use std::env;
                 if let Ok(value) = env::var(&n) {
-                  if let IResult::Done(_, output) = int64_scalar_value(value.as_bytes()) {
+                  if let IResult::Done(_, output) = int64_scalar_value(&value) {
                     output
-                  } else if let IResult::Done(_, output) = int32_scalar_value(value.as_bytes()) {
+                  } else if let IResult::Done(_, output) = int32_scalar_value(&value) {
                     output
                   } else {
                     ScalarValue::Integer32(0i32)
@@ -544,46 +571,46 @@ named!(int_env_value<&[u8], ScalarValue>,
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // TODO(filipegoncalves) This calls flt_env_value, and flt_env_value
 // calls flt64_scalar_value and flt32_scalar_Value
-named!(flt_scalar_value<&[u8], ScalarValue>,
+named!(flt_scalar_value<&str, ScalarValue>,
        alt!(flt64_scalar_value | flt32_scalar_value | flt_env_value));
 
 // Auxiliary parser for floats with digits before .
 // [0-9]+\.[0-9]*
-named!(flt_base_w_digits_bef_dot<&[u8], (&str, &str)>,
+named!(flt_base_w_digits_bef_dot<&str, (&str, &str)>,
        do_parse!(
-           b: map_res!(digit, from_utf8) >>
+           b: digit >>
            tag!(".") >>
-           a: opt!(map_res!(complete!(digit), from_utf8)) >>
+           a: opt!(complete!(digit)) >>
            (b, a.unwrap_or(""))));
 
 // Auxiliary parser for floats with no digits before .
 // \.[0-9]+
-named!(flt_base_no_digits_bef_dot<&[u8], (&str, &str)>,
+named!(flt_base_no_digits_bef_dot<&str, (&str, &str)>,
        do_parse!(
            tag!(".") >>
-           a: map_res!(digit, from_utf8) >>
+           a: digit >>
            ("", a)));
 
 // Auxiliary parser to match the base of a float
 // [0-9]+\.[0-9]* | \.[0-9]+
-named!(flt_base<&[u8], (&str, &str)>,
+named!(flt_base<&str, (&str, &str)>,
        alt!(flt_base_w_digits_bef_dot | flt_base_no_digits_bef_dot));
 
 // Auxiliary parser to match the exponent of a float
 // [eE][+-]?[0-9]+
-named!(flt_exponent<&[u8], (&str, &str)>,
+named!(flt_exponent<&str, (&str, &str)>,
        do_parse!(
            alt!(tag!("e") | tag!("E")) >>
-           s: opt!(map_res!(alt!(tag!("+") | tag!("-")), from_utf8)) >>
-           v: map_res!(digit, from_utf8) >>
+           s: opt!(alt!(tag!("+") | tag!("-"))) >>
+           v: digit >>
            (s.unwrap_or("+"), v)));
 
 // Tentative parser to match Floating32 scalar values
 // Returns an `Err` if `parse::<f32>()` fails
 // [+-]?([0-9]+\.[0-9]* | \.[0-9]+)([eE][+-]?[0-9]+)?
-named!(flt32_scalar_value_tentative<&[u8], Result<f32, <f32 as FromStr>::Err> >,
+named!(flt32_scalar_value_tentative<&str, Result<f32, <f32 as FromStr>::Err> >,
        do_parse!(
-           s: opt!(map_res!(alt!(tag!("+") | tag!("-")), from_utf8)) >>
+           s: opt!(alt!(tag!("+") | tag!("-"))) >>
            b: flt_base >>
            e: opt!(complete!(flt_exponent)) >>
            ({
@@ -598,9 +625,9 @@ named!(flt32_scalar_value_tentative<&[u8], Result<f32, <f32 as FromStr>::Err> >,
 // Tentative parser to match Floating64 scalar values
 // Returns an Err if parse::<f64>() fails
 // [+-]?([0-9]+\.[0-9]* | \.[0-9]+)([eE][+-]?[0-9]+)?L
-named!(flt64_scalar_value_tentative<&[u8], Result<f64, <f64 as FromStr>::Err> >,
+named!(flt64_scalar_value_tentative<&str, Result<f64, <f64 as FromStr>::Err> >,
        do_parse!(
-           s: opt!(map_res!(alt!(tag!("+") | tag!("-")), from_utf8)) >>
+           s: opt!(alt!(tag!("+") | tag!("-"))) >>
            b: flt_base >>
            e: opt!(flt_exponent) >>
            tag!("L") >>
@@ -614,14 +641,14 @@ named!(flt64_scalar_value_tentative<&[u8], Result<f64, <f64 as FromStr>::Err> >,
            })));
 
 // Transforms a possible `Err` returned by `parse::<f32>()` into a parse `Error`
-named!(flt32_scalar_value<&[u8], ScalarValue>,
+named!(flt32_scalar_value<&str, ScalarValue>,
        map_res!(flt32_scalar_value_tentative,
                 |r: Result<f32, <f32 as FromStr>::Err>| {
                     r.map(|v| ScalarValue::Floating32(v))
                 }));
 
 // Transforms a possible `Err` returned by `parse::<f64>()` into a parse `Error`
-named!(flt64_scalar_value<&[u8], ScalarValue>,
+named!(flt64_scalar_value<&str, ScalarValue>,
        map_res!(flt64_scalar_value_tentative,
                 |r: Result<f64, <f64 as FromStr>::Err>| {
                     r.map(|v| ScalarValue::Floating64(v))
@@ -632,7 +659,7 @@ named!(flt64_scalar_value<&[u8], ScalarValue>,
 // We do a little hack here to avoid double codding; we call flt32_scalar_value and flt64_scalar_value directly
 // on the value of the environment variable and iterpret the return value.
 // TODO(filipegoncalves) Generate errors if something fails
-named!(flt_env_value<&[u8], ScalarValue>,
+named!(flt_env_value<&str, ScalarValue>,
        do_parse!(
              tag!("$") >>
              n: string_literal >>
@@ -644,11 +671,12 @@ named!(flt_env_value<&[u8], ScalarValue>,
              ({
                 use std::env;
                 if let Ok(value) = env::var(&n) {
-                    if let IResult::Done(_, output) = flt64_scalar_value(value.as_bytes()) {
+                    if let IResult::Done(_, output) = flt64_scalar_value(&value) {
                         output
-                    } else if let IResult::Done(_, output) = flt32_scalar_value(value.as_bytes()) {
+                    } else if let IResult::Done(_, output) = flt32_scalar_value(&value) {
                         output
                     } else {
+                        println!("Falling back to 0");
                         ScalarValue::Floating32(0f32)
                     }
                 } else {
@@ -659,7 +687,7 @@ named!(flt_env_value<&[u8], ScalarValue>,
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Auto type environment variable parser ~~~
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-named!(auto_env_scalar_value<&[u8], ScalarValue>,
+named!(auto_env_scalar_value<&str, ScalarValue>,
        do_parse!(
              tag!("$") >>
              n: string_literal >>
@@ -678,17 +706,17 @@ named!(auto_env_scalar_value<&[u8], ScalarValue>,
                 //                  should not generate any errors here. Contact me if you like
                 //                  to discuss that.
                 if let Ok(value) = env::var(&n) {
-                  if let IResult::Done(_, output) = bool_true_value(value.as_bytes()) {
+                  if let IResult::Done(_, output) = bool_true_value(&value) {
                     output
-                  } else if let IResult::Done(_, output) = bool_false_value(value.as_bytes()) {
+                  } else if let IResult::Done(_, output) = bool_false_value(&value) {
                     output
-                  } else if let IResult::Done(_, output) = flt64_scalar_value(value.as_bytes()) {
+                  } else if let IResult::Done(_, output) = flt64_scalar_value(&value) {
                     output
-                  } else if let IResult::Done(_, output) = flt32_scalar_value(value.as_bytes()) {
+                  } else if let IResult::Done(_, output) = flt32_scalar_value(&value) {
                     output
-                  } else if let IResult::Done(_, output) = int64_scalar_value(value.as_bytes()) {
+                  } else if let IResult::Done(_, output) = int64_scalar_value(&value) {
                     output
-                  } else if let IResult::Done(_, output) = int32_scalar_value(value.as_bytes()) {
+                  } else if let IResult::Done(_, output) = int32_scalar_value(&value) {
                     output
                   } else {
                     ScalarValue::Str(value)
@@ -701,167 +729,107 @@ named!(auto_env_scalar_value<&[u8], ScalarValue>,
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ Parser to ignore useless stuff: comments, new lines, ... ~~~
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-named!(blanks, map!(many0!(alt!(multispace | comment_one_line | comment_block)), |_| { &b""[..] }));
+named!(blanks<&str, ()>, map!(many0!(alt!(multispace | comment_one_line | comment_block)), |_| ()));
 
 // Auxiliary parser to ignore newlines
 // NOTE: In some cases, this parser is combined with others that use `not_line_ending`
 //       However, `not_line_ending` won't match `\u{2028}` or `\u{2029}`
-named!(eol,
+named!(eol(&str) -> &str,
        alt!(tag!("\n") | tag!("\r\n") | tag!("\u{2028}") | tag!("\u{2029}")));
 
 // Auxiliary parser to ignore one-line comments
-named!(comment_one_line,
+named!(comment_one_line(&str) -> &str,
        do_parse!(
            alt!(tag!("//") | tag!("#")) >>
            opt!(not_line_ending) >>
            alt!(eof!() | eol) >>
-           (&b""[..])));
+           ("")));
 
 // Auxiliary parser to ignore block comments
-named!(comment_block,
+named!(comment_block(&str) -> &str,
        do_parse!(
            tag!("/*") >>
-           take_until_and_consume!(&b"*/"[..]) >>
-           (&b""[..])));
+           take_until_and_consume!("*/") >>
+           ("")));
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // ~~~ End of parsers section ~~~
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-// The following code to unescape string literals was copied from Rust's source
-// It's in src/libsyntax/parse/mod.rs
-// We use it here to avoid using the `rustc_private` feature, which would break the build on the
-// beta channel
-
-/// Parse a string representing a character literal into its final form.
-/// Rather than just accepting/rejecting a given literal, unescapes it as
-/// well. Can take any slice prefixed by a character escape. Returns the
-/// character and the number of characters consumed.
-fn char_lit(lit: &str) -> (char, isize) {
-    use std::char;
-
-    let mut chars = lit.chars();
-    let c = match (chars.next(), chars.next()) {
-        (Some(c), None) if c != '\\' => return (c, 1),
-        (Some('\\'), Some(c)) => match c {
-            '"' => Some('"'),
-            'n' => Some('\n'),
-            'r' => Some('\r'),
-            't' => Some('\t'),
-            '\\' => Some('\\'),
-            '\'' => Some('\''),
-            '0' => Some('\0'),
-            _ => { None }
-        },
-        _ => panic!("lexer accepted invalid char escape `{}`", lit)
-    };
-
-    match c {
-        Some(x) => return (x, 2),
-        None => { }
-    }
-
-    let msg = format!("lexer should have rejected a bad character escape {}", lit);
-    let msg2 = &msg[..];
-
-    fn esc(len: usize, lit: &str) -> Option<(char, isize)> {
-        u32::from_str_radix(&lit[2..len], 16).ok()
-        .and_then(char::from_u32)
-        .map(|x| (x, len as isize))
-    }
-
-    let unicode_escape = || -> Option<(char, isize)> {
-        if lit.as_bytes()[2] == b'{' {
-            let idx = lit.find('}').expect(msg2);
-            let subslice = &lit[3..idx];
-            u32::from_str_radix(subslice, 16).ok()
-                .and_then(char::from_u32)
-                .map(|x| (x, subslice.chars().count() as isize + 4))
-        } else {
-            esc(6, lit)
-        }
-    };
-
-    // Unicode escapes
-    return match lit.as_bytes()[1] as char {
-        'x' | 'X' => esc(4, lit),
-        'u' => unicode_escape(),
-        'U' => esc(10, lit),
-        _ => None,
-    }.expect(msg2);
+fn custom_error<I, O>(_input: I, err: u32) -> IResult<I, O> {
+    use nom::ErrorKind::Custom;
+    Error(error_position!(Custom(err), _input))
 }
 
-/// Parse a string representing a string literal into its final form. Does
-/// unescaping.
-fn str_lit(lit: &str) -> String {
-    let mut res = String::with_capacity(lit.len());
+/// Parse a string containing an escape sequence.
+/// Rather than just accepting/rejecting a given literal, unescapes it as
+/// well. Can take any slice that follows a character escape. Returns the
+/// character.
+fn escape_dispatch<'a>(mut input: str::Chars<'a>) -> IResult<&'a str, Option<char>> {
+    use std::char;
+    type EscResult<'a> = IResult<&'a str, Option<char>>;
 
-    // FIXME #8372: This could be a for-loop if it didn't borrow the iterator
-    let error = |i| format!("lexer should have rejected {} at {}", lit, i);
-
-    /// Eat everything up to a non-whitespace
-    fn eat<'a>(it: &mut iter::Peekable<str::CharIndices<'a>>) {
-        loop {
-            match it.peek().map(|x| x.1) {
-                Some(' ') | Some('\n') | Some('\r') | Some('\t') => {
-                    it.next();
-                },
-                _ => { break; }
-            }
+    #[inline(always)]
+    fn eat(rest: str::Chars) -> EscResult {
+        Done(rest.as_str().trim_left(), None)
+    }
+    #[inline(always)]
+    fn done(ch: char, rest: str::Chars) -> EscResult {
+        Done(rest.as_str(), Some(ch))
+    }
+    fn decode_hex<'a>(hex: &'a str, rest: &'a str) -> EscResult<'a> {
+        if let Some(c) = u32::from_str_radix(hex, 16).ok().and_then(char::from_u32) {
+            Done(rest, Some(c))
+        } else {
+            custom_error(hex, 0)
         }
     }
-
-    let mut chars = lit.char_indices().peekable();
-    loop {
-        match chars.next() {
-            Some((i, c)) => {
-                match c {
-                    '\\' => {
-                        let ch = chars.peek().unwrap_or_else(|| {
-                            panic!("{}", error(i))
-                        }).1;
-
-                        if ch == '\n' {
-                            eat(&mut chars);
-                        } else if ch == '\r' {
-                            chars.next();
-                            let ch = chars.peek().unwrap_or_else(|| {
-                                panic!("{}", error(i))
-                            }).1;
-
-                            if ch != '\n' {
-                                panic!("lexer accepted bare CR");
-                            }
-                            eat(&mut chars);
-                        } else {
-                            // otherwise, a normal escape
-                            let (c, n) = char_lit(&lit[i..]);
-                            for _ in 0..n - 1 { // we don't need to move past the first \
-                                chars.next();
-                            }
-                            res.push(c);
-                        }
-                    },
-                    '\r' => {
-                        let ch = chars.peek().unwrap_or_else(|| {
-                            panic!("{}", error(i))
-                        }).1;
-
-                        if ch != '\n' {
-                            panic!("lexer accepted bare CR");
-                        }
-                        chars.next();
-                        res.push('\n');
-                    }
-                    c => res.push(c),
+    fn hex_escaped(len: usize, input: &str) -> EscResult {
+        if len > input.len() {
+            Incomplete(Needed::Size(len - input.len()))
+        } else if input.is_char_boundary(len) {
+            decode_hex(&input[0..len], &input[len..])
+        } else {
+            custom_error(input, 0)
+        }
+    }
+    fn unicode_escaped(input: &str) -> EscResult {
+        if input.len() > 0 {
+            if input.as_bytes()[0] == b'{' {
+                if let Some(idx) = input.find('}') {
+                    decode_hex(&input[1..idx], &input[idx + 1..])
+                } else {
+                    Incomplete(Needed::Unknown)
                 }
-            },
-            None => break
+            } else {
+                hex_escaped(4, input)
+            }
+        } else {
+            Incomplete(Needed::Unknown)
         }
+
     }
 
-    res.shrink_to_fit(); // probably not going to do anything, unless there was an escape.
-    res
+    match input.next() {
+        Some('"') => done('"', input),
+        Some('n') => done('\n', input),
+        Some('r') => done('\r', input),
+        Some('t') => done('\t', input),
+        Some('\\') => done('\\', input),
+        Some('\'') => done('\'', input),
+        Some('0') => done('\0', input),
+        Some('\n') => eat(input),
+        Some('\r') => match input.next() {
+            Some('\n') => eat(input),
+            None => Incomplete(Needed::Size(1)),
+            _ => custom_error(input.as_str(), 0)
+        },
+        Some('x') | Some('X') => hex_escaped(2, input.as_str()),
+        Some('U') => hex_escaped(8, input.as_str()),
+        Some('u') => unicode_escaped(input.as_str()),
+        None => Incomplete(Needed::Unknown),
+        _ => custom_error(input.as_str(), 0)
+    }
 }
 
 #[cfg(test)]
@@ -890,82 +858,82 @@ mod test {
 
     #[test]
     fn setting_name_alpha() {
-        let a_setting = &b"miles"[..];
+        let a_setting = "miles";
         let res = setting_name(a_setting);
-        assert_eq!(res, Done(&b""[..], "miles".to_string()));
+        assert_eq!(res, Done("", "miles".to_string()));
     }
 
     #[test]
     fn setting_name_alphanumeric() {
-        let a_setting = &b"ipv4_address-test"[..];
+        let a_setting = "ipv4_address-test";
         let res = setting_name(a_setting);
-        assert_eq!(res, Done(&b""[..], "ipv4_address-test".to_string()));
+        assert_eq!(res, Done("", "ipv4_address-test".to_string()));
     }
 
     #[test]
     fn setting_name_ends_with_symbols() {
-        let a_setting = &b"a_test__"[..];
+        let a_setting = "a_test__";
         let res = setting_name(a_setting);
-        assert_eq!(res, Done(&b""[..], "a_test__".to_string()));
+        assert_eq!(res, Done("", "a_test__".to_string()));
 
-        let a_setting2 = &b"b-_-"[..];
+        let a_setting2 = "b-_-";
         let res2 = setting_name(a_setting2);
-        assert_eq!(res2, Done(&b""[..], "b-_-".to_string()));
+        assert_eq!(res2, Done("", "b-_-".to_string()));
     }
 
     #[test]
     fn setting_name_ends_with_num() {
-        let a_setting = &b"a_test_1234"[..];
+        let a_setting = "a_test_1234";
         let res = setting_name(a_setting);
-        assert_eq!(res, Done(&b""[..], "a_test_1234".to_string()));
+        assert_eq!(res, Done("", "a_test_1234".to_string()));
     }
 
     #[test]
     fn setting_name_bad_num_prefix() {
-        let a_setting = &b"12_xxx"[..];
+        let a_setting = "12_xxx";
         let res = setting_name(a_setting);
         assert_eq!(res, Error(ErrorKind::Alpha));
     }
 
     #[test]
     fn setting_name_bad_symbol_prefix() {
-        let a_setting = &b"__not_allowed"[..];
+        let a_setting = "__not_allowed";
         let res = setting_name(a_setting);
         assert_eq!(res, Error(ErrorKind::Alpha));
     }
 
     #[test]
     fn single_setting() {
-        let a_setting = &b"a_test__2 = \n\n\t19L;\r\n"[..];
+        let a_setting = "a_test__2 = \n\n\t19L;\r\n";
         let res = setting(a_setting);
-        assert_eq!(res, Done(&b""[..], Setting::new(
+        assert_eq!(res, Done("", Setting::new(
             "a_test__2".to_string(),
             Value::Svalue(ScalarValue::Integer64(19)))));
     }
 
     #[test]
     fn single_setting2() {
-        let a_setting = &b"mysql_user:\"root\";"[..];
+        let a_setting = "mysql_user:\"root\";";
         let res = setting(a_setting);
-        assert_eq!(res, Done(&b""[..], Setting::new(
+        assert_eq!(res, Done("", Setting::new(
             "mysql_user".to_string(),
             Value::Svalue(ScalarValue::Str("root".to_string())))));
     }
 
     #[test]
     fn single_setting3() {
-        let a_setting = &b"\n\tcountry   : \"USA\"\n\n;"[..];
+        let a_setting = "\n\tcountry   : \"USA\"\n\n;";
         let res = setting(a_setting);
-        assert_eq!(res, Done(&b""[..], Setting::new(
+        assert_eq!(res, Done("", Setting::new(
             "country".to_string(),
             Value::Svalue(ScalarValue::Str("USA".to_string())))));
     }
 
     #[test]
     fn single_setting_list() {
-        let a_setting = &b"codes: (1, 2, 3);"[..];
+        let a_setting = "codes: (1, 2, 3);";
         let res = setting(a_setting);
-        assert_eq!(res, Done(&b""[..], Setting::new(
+        assert_eq!(res, Done("", Setting::new(
             "codes".to_string(),
             Value::List(vec![
                 Value::Svalue(ScalarValue::Integer32(1)),
@@ -975,9 +943,9 @@ mod test {
 
     #[test]
     fn single_setting_array() {
-        let a_setting = &b"codes: [1, 2, 3];"[..];
+        let a_setting = "codes: [1, 2, 3];";
         let res = setting(a_setting);
-        assert_eq!(res, Done(&b""[..], Setting::new(
+        assert_eq!(res, Done("", Setting::new(
             "codes".to_string(),
             Value::Array(vec![
                 Value::Svalue(ScalarValue::Integer32(1)),
@@ -987,7 +955,7 @@ mod test {
 
     #[test]
     fn single_setting_group() {
-        let a_setting = &b"misc: { x = 1; y = 2; };"[..];
+        let a_setting = "misc: { x = 1; y = 2; };";
         let res = setting(a_setting);
 
         let mut grp = SettingsList::new();
@@ -996,12 +964,12 @@ mod test {
         grp.insert("y".to_string(),
                    Setting::new("y".to_string(), Value::Svalue(ScalarValue::Integer32(2))));
 
-        assert_eq!(res, Done(&b""[..], Setting::new("misc".to_string(), Value::Group(grp))));
+        assert_eq!(res, Done("", Setting::new("misc".to_string(), Value::Group(grp))));
     }
 
     #[test]
     fn settings_lst() {
-        let settings = &b"setting1: 1; setting2\n\n=\n2 ;\tsetting3=\"bye\";\n"[..];
+        let settings = "setting1: 1; setting2\n\n=\n2 ;\tsetting3=\"bye\";\n";
         let res = settings_list(settings);
 
         let mut expected = SettingsList::new();
@@ -1015,908 +983,929 @@ mod test {
                         Setting::new("setting3".to_string(),
                                      Value::Svalue(ScalarValue::Str("bye".to_string()))));
 
-        assert_eq!(res, Done(&b""[..], expected));
+        assert_eq!(res, Done("", expected));
     }
 
     #[test]
     fn blank_settings_list() {
-        let settings = &b"   \n//comment\n/**\n*/\n"[..];
+        let settings = "   \n//comment\n/**\n*/\n";
         let res = settings_list(settings);
 
         let expected = SettingsList::new();
-        assert_eq!(res, Done(&b""[..], expected))
+        assert_eq!(res, Done("", expected))
     }
 
     #[test]
     fn empty_str_lit() {
-        let input = &b"\"\""[..];
+        let input = "\"\"";
         let res = string_literal(input);
-        assert_eq!(res, Done(&b""[..], String::new()));
+        assert_eq!(res, Done("", String::new()));
     }
 
     #[test]
     fn simple_str_lit() {
-        let input = &b"\"a string literal\""[..];
+        let input = "\"a string literal\"";
         let res = string_literal(input);
-        assert_eq!(res, Done(&b""[..], "a string literal".to_string()));
+        assert_eq!(res, Done("", "a string literal".to_string()));
     }
 
     #[test]
     fn str_lit_with_escapes() {
-        let input = &b"\"And he said: \\\"Hello, world!\\\"\\n\""[..];
+        let input = "\"And he said: \\\"Hello, world!\\\"\\n\"";
         let res = string_literal(input);
-        assert_eq!(res, Done(&b""[..], "And he said: \"Hello, world!\"\n".to_string()));
+        assert_eq!(res, Done("", "And he said: \"Hello, world!\"\n".to_string()));
     }
 
     #[test]
     fn str_lit_with_escapes2() {
-        let input = &b"\"And he said: \\\"Hello, world!\\\"\""[..];
+        let input = "\"And he said: \\\"Hello, world!\\\"\"";
         let res = string_literal(input);
-        assert_eq!(res, Done(&b""[..], "And he said: \"Hello, world!\"".to_string()));
+        assert_eq!(res, Done("", "And he said: \"Hello, world!\"".to_string()));
     }
 
     #[test]
     fn str_lit_with_escapes3() {
-        let input = &b"\"A string\\twith a tab\""[..];
+        let input = "\"A string\\twith a tab\"";
         let res = string_literal(input);
-        assert_eq!(res, Done(&b""[..], "A string\twith a tab".to_string()));
+        assert_eq!(res, Done("", "A string\twith a tab".to_string()));
     }
 
     #[test]
     fn str_lit_with_escapes4() {
-        let input = &b"\"A backslash in quotes: \\\"\\\\\\\"\""[..];
+        let input = "\"A backslash in quotes: \\\"\\\\\\\"\"";
         let res = string_literal(input);
-        assert_eq!(res, Done(&b""[..], "A backslash in quotes: \"\\\"".to_string()));
+        assert_eq!(res, Done("", "A backslash in quotes: \"\\\"".to_string()));
     }
 
     #[test]
     fn str_lit_with_escapes5() {
-        let input = &b"\"escaped_str=\\\"Just a \\\\\\\"test\\\\\\\" with escapes.\\\";\""[..];
+        let input = "\"escaped_str=\\\"Just a \\\\\\\"test\\\\\\\" with escapes.\\\";\"";
         let res = string_literal(input);
-        assert_eq!(res, Done(&b""[..],
+        assert_eq!(res, Done("",
                              "escaped_str=\"Just a \\\"test\\\" with escapes.\";".to_string()));
     }
 
     #[test]
     fn str_lit_with_escape6() {
-        let input = &b"\"\\nthis time we started with a newline\""[..];
+        let input = "\"\\nthis time we started with a newline\"";
         let res = string_literal(input);
-        assert_eq!(res, Done(&b""[..], "\nthis time we started with a newline".to_string()));
+        assert_eq!(res, Done("", "\nthis time we started with a newline".to_string()));
+    }
+
+    #[test]
+    fn str_lit_with_hex_escape() {
+        let input = "\"This has s\\x6fme \\x00 special \\X43haracters like \\xa2 and \\XCA\"";
+        let res = string_literal(input);
+        assert_eq!(res, Done("", "This has some \0 special Characters like ¢ and Ê".to_string()));
+    }
+
+    #[test]
+    fn str_lit_with_hex_escape2() {
+        let input = "\"Some unicode characters like \\u20ac and \\U0001F604\"";
+        let res = string_literal(input);
+        assert_eq!(res, Done("", "Some unicode characters like € and 😄".to_string()))
+    }
+
+    #[test]
+    fn str_lit_with_hex_escape3() {
+        let input ="\"This has an escape with braces \\u{1f607}\"";
+        let res = string_literal(input);
+        assert_eq!(res, Done("", "This has an escape with braces 😇".to_string()));
     }
 
     #[test]
     fn single_str_scalar_value() {
-        let input = &b"\"a string literal\""[..];
+        let input = "\"a string literal\"";
         let res = str_scalar_value(input);
-        assert_eq!(res, Done(&b""[..], ScalarValue::Str("a string literal".to_string())));
+        assert_eq!(res, Done("", ScalarValue::Str("a string literal".to_string())));
     }
 
     #[test]
     fn single_str_scalar_value2() {
-        let input = &b"\"A backslash in quotes: \\\"\\\\\\\"\""[..];
+        let input = "\"A backslash in quotes: \\\"\\\\\\\"\"";
         let res = str_scalar_value(input);
-        assert_eq!(res, Done(&b""[..], ScalarValue::Str(
+        assert_eq!(res, Done("", ScalarValue::Str(
             "A backslash in quotes: \"\\\"".to_string())));
     }
 
     #[test]
     fn single_str_scalar_value3() {
-        let input = &b"\"escaped_str=\\\"Just a \\\\\\\"test\\\\\\\" with escapes.\\\";\""[..];
+        let input = "\"escaped_str=\\\"Just a \\\\\\\"test\\\\\\\" with escapes.\\\";\"";
         let res = str_scalar_value(input);
-        assert_eq!(res, Done(&b""[..], ScalarValue::Str(
+        assert_eq!(res, Done("", ScalarValue::Str(
             "escaped_str=\"Just a \\\"test\\\" with escapes.\";".to_string())));
     }
 
     #[test]
     fn multi_str_scalar_value() {
-        let input = &b"\"string\"\n\n\" literals\"\t\" to\"    \" the rescue\""[..];
+        let input = "\"string\"\n\n\" literals\"\t\" to\"    \" the rescue\"";
         let res = str_scalar_value(input);
-        assert_eq!(res, Done(&b""[..], ScalarValue::Str(
+        assert_eq!(res, Done("", ScalarValue::Str(
             "string literals to the rescue".to_string())));
     }
 
     #[test]
     fn multi_str_scalar_value2() {
-        let input = &concat!("\"escaped_\"\"str=\\\"Just a \\\\\"\r\n\r\n   \"\\\"te\"\t\t  ",
-                             "\t\t\"st\\\\\\\" \"\n\"wi\"\"th escapes.\\\";\"").as_bytes()[..];
+        let input = concat!("\"escaped_\"\"str=\\\"Just a \\\\\"\r\n\r\n   \"\\\"te\"\t\t  ",
+                             "\t\t\"st\\\\\\\" \"\n\"wi\"\"th escapes.\\\";\"");
         let res = str_scalar_value(input);
-        assert_eq!(res, Done(&b""[..], ScalarValue::Str(
+        assert_eq!(res, Done("", ScalarValue::Str(
             "escaped_str=\"Just a \\\"test\\\" with escapes.\";".to_string())));
     }
 
     #[test]
     fn multi_str_scalar_value3() {
-        let input = &b"\"string\"\n//Test\n\" literals\"\t\" to\"    \" the rescue\""[..];
+        let input = "\"string\"\n//Test\n\" literals\"\t\" to\"    \" the rescue\"";
         let res = str_scalar_value(input);
-        assert_eq!(res, Done(&b""[..], ScalarValue::Str(
+        assert_eq!(res, Done("", ScalarValue::Str(
             "string literals to the rescue".to_string())));
     }
 
     #[test]
     fn multi_str_scalar_value4() {
-        let input = &b"\"string\"/*test*/\" literals\"\t\" to\" /**/   \" the rescue\""[..];
+        let input = "\"string\"/*test*/\" literals\"\t\" to\" /**/   \" the rescue\"";
         let res = str_scalar_value(input);
-        assert_eq!(res, Done(&b""[..], ScalarValue::Str(
+        assert_eq!(res, Done("", ScalarValue::Str(
             "string literals to the rescue".to_string())));
     }
 
     #[test]
     fn end_of_line1() {
-        let input = &b"a test\n"[..];
+        let input = "a test\n";
         let res = eol(input);
         assert_eq!(res, Error(ErrorKind::Alt));
     }
 
     #[test]
     fn end_of_line2() {
-        let input = &b"\r\n"[..];
+        let input = "\r\n";
         let res = eol(input);
-        assert_eq!(res, Done(&b""[..], input));
+        assert_eq!(res, Done("", input));
     }
 
     #[test]
     fn end_of_line3() {
-        let input = &b"\n"[..];
+        let input = "\n";
         let res = eol(input);
-        assert_eq!(res, Done(&b""[..], input));
+        assert_eq!(res, Done("", input));
     }
 
     #[test]
     fn end_of_line4() {
-        let input = &"\u{2028}\n\n".as_bytes()[..];
+        let input = "\u{2028}\n\n";
         let res = eol(input);
-        assert_eq!(res, Done(&b"\n\n"[..], &"\u{2028}".as_bytes()[..]));
+        assert_eq!(res, Done("\n\n", "\u{2028}"));
     }
 
     #[test]
     fn one_line_comment_bad() {
-        let input = &b"not a comment // see?"[..];
+        let input = "not a comment // see?";
         let res = comment_one_line(input);
         assert_eq!(res, Error(ErrorKind::Alt));
     }
 
     #[test]
     fn one_line_comment() {
-        let input = &b"//\r\n"[..];
+        let input = "//\r\n";
         let res = comment_one_line(input);
-        assert_eq!(res, Done(&b""[..], &b""[..]));
+        assert_eq!(res, Done("", ""));
     }
 
     #[test]
     fn one_line_comment2() {
-        let input = &b"// A one-line comment example.\n\n\n"[..];
+        let input = "// A one-line comment example.\n\n\n";
         let res = comment_one_line(input);
-        assert_eq!(res, Done(&b"\n\n"[..], &b""[..]));
+        assert_eq!(res, Done("\n\n", ""));
     }
 
     #[test]
     fn one_line_comment3() {
-        let input = &b"//////////Another comment. One-liners don't // // nest\n"[..];
+        let input = "//////////Another comment. One-liners don't // // nest\n";
         let res = comment_one_line(input);
-        assert_eq!(res, Done(&b""[..], &b""[..]));
+        assert_eq!(res, Done("", ""));
     }
 
     #[test]
     fn one_line_comment4() {
-        let input = &b"# Comments can also start with a `#`.\n"[..];
+        let input = "# Comments can also start with a `#`.\n";
         let res = comment_one_line(input);
-        assert_eq!(res, Done(&b""[..], &b""[..]));
+        assert_eq!(res, Done("", ""));
     }
 
     #[test]
     fn comment_blk_bad() {
-        let input = &b"not a comment /* see?"[..];
+        let input = "not a comment /* see?";
         let res = comment_block(input);
         assert_eq!(res, Error(ErrorKind::Tag));
     }
 
     #[test]
     fn comment_blk() {
-        let input = &b"/**/"[..];
+        let input = "/**/";
         let res = comment_block(input);
-        assert_eq!(res, Done(&b""[..], &b""[..]));
+        assert_eq!(res, Done("", ""));
     }
 
     #[test]
     fn comment_blk2() {
-        let input = &b"/* Comments do /* not /****nest*/"[..];
+        let input = "/* Comments do /* not /****nest*/";
         let res = comment_block(input);
-        assert_eq!(res, Done(&b""[..], &b""[..]));
+        assert_eq!(res, Done("", ""));
     }
 
     #[test]
     fn comment_blk3() {
-        let input = &b"/* A\ncomment\nwith\nmultiple\nlines\n\t\t\r\nand\nspaces*****/\ntest"[..];
+        let input = "/* A\ncomment\nwith\nmultiple\nlines\n\t\t\r\nand\nspaces*****/\ntest";
         let res = comment_block(input);
-        assert_eq!(res, Done(&b"\ntest"[..], &b""[..]));
+        assert_eq!(res, Done("\ntest", ""));
     }
 
     #[test]
     fn comment_blk4() {
-        let input = &b"/*/*/*Again, they don't \n*nest*/See? We're not in a comment now."[..];
+        let input = "/*/*/*Again, they don't \n*nest*/See? We're not in a comment now.";
         let res = comment_block(input);
         // Hah! A trap :) The comment ends with the first occurrence of `*/`
-        assert_eq!(res, Done(&b"*Again, they don't \n*nest*/See? We're not in a comment now."[..],
-                             &b""[..]));
+        assert_eq!(res, Done("*Again, they don't \n*nest*/See? We're not in a comment now.",
+                             ""));
     }
 
     #[test]
     fn comment_blk5() {
-        let input = &b"/*/*\n *Again, they don't \n *nest*/See? We're not in a comment now."[..];
+        let input = "/*/*\n *Again, they don't \n *nest*/See? We're not in a comment now.";
         let res = comment_block(input);
-        assert_eq!(res, Done(&b"See? We're not in a comment now."[..], &b""[..]));
+        assert_eq!(res, Done("See? We're not in a comment now.", ""));
     }
 
     #[test]
     fn blanks_mixed() {
-        let input = &b"   \n\n"[..];
+        let input = "   \n\n";
         let res = blanks(input);
-        assert_eq!(res, Done(&b""[..], &b""[..]));
+        assert_eq!(res, Done("", ()));
     }
 
     #[test]
     fn blanks_mixed2() {
-        let input = &b"   "[..];
+        let input = "   ";
         let res = blanks(input);
-        assert_eq!(res, Done(&b""[..], &b""[..]));
+        assert_eq!(res, Done("", ()));
     }
 
     #[test]
     fn blanks_mixed3() {
-        let input = &b"// A test\n  \t/* a \ncomment\n\n*//**///Hello\n\n\n\n"[..];
+        let input = "// A test\n  \t/* a \ncomment\n\n*//**///Hello\n\n\n\n";
         let res = blanks(input);
-        assert_eq!(res, Done(&b""[..], &b""[..]));
+        assert_eq!(res, Done("", ()));
     }
 
     #[test]
     fn blanks_mixed4() {
-        let input = &b"\n\n\t\t         // A test\n  \t/* a \ncomment\n\n*//**///Hello\n\n\n\n"[..];
+        let input = "\n\n\t\t         // A test\n  \t/* a \ncomment\n\n*//**///Hello\n\n\n\n";
         let res = blanks(input);
-        assert_eq!(res, Done(&b""[..], &b""[..]));
+        assert_eq!(res, Done("", ()));
     }
 
     #[test]
     fn blanks_mixed5() {
-        let input = &b"\n\n\t\t         // A test\n  \t/* a \ncomment\n\n*//**///Hello\nXPTO\n"[..];
+        let input = "\n\n\t\t         // A test\n  \t/* a \ncomment\n\n*//**///Hello\nXPTO\n";
         let res = blanks(input);
-        assert_eq!(res, Done(&b"XPTO\n"[..], &b""[..]));
+        assert_eq!(res, Done("XPTO\n", ()));
     }
 
     #[test]
     fn blanks_mixed6() {
-        let input = &b"// A test\n"[..];
+        let input = "// A test\n";
         let res = blanks(input);
-        assert_eq!(res, Done(&b""[..], &b""[..]));
+        assert_eq!(res, Done("", ()));
     }
 
     #[test]
     fn blanks_mixed7() {
-        let input = &b"### A test\naaa"[..];
+        let input = "### A test\naaa";
         let res = blanks(input);
-        assert_eq!(res, Done(&b"aaa"[..], &b""[..]));
+        assert_eq!(res, Done("aaa", ()));
     }
 
     #[test]
     fn blanks_mixed8() {
-        let input = &b"/************/\r\n\r\n\r\n\t"[..];
+        let input = "/************/\r\n\r\n\r\n\t";
         let res = blanks(input);
-        assert_eq!(res, Done(&b""[..], &b""[..]));
+        assert_eq!(res, Done("", ()));
     }
 
     #[test]
     fn flt_base_w_digits_before_dot() {
-        let input = &b".4435"[..];
+        let input = ".4435";
         let res = flt_base_w_digits_bef_dot(input);
         assert_eq!(res, Error(ErrorKind::Digit));
     }
 
     #[test]
     fn flt_base_w_digits_before_dot2() {
-        let input = &b"0.4435"[..];
+        let input = "0.4435";
         let res = flt_base_w_digits_bef_dot(input);
-        assert_eq!(res, Done(&b""[..], ("0", "4435")));
+        assert_eq!(res, Done("", ("0", "4435")));
     }
 
     #[test]
     fn flt_base_w_digits_before_dot3() {
-        let input = &b"19570.4435"[..];
+        let input = "19570.4435";
         let res = flt_base_w_digits_bef_dot(input);
-        assert_eq!(res, Done(&b""[..], ("19570", "4435")));
+        assert_eq!(res, Done("", ("19570", "4435")));
     }
 
     #[test]
     fn flt_base_w_digits_before_dot4() {
-        let input = &b"19570."[..];
+        let input = "19570.";
         let res = flt_base_w_digits_bef_dot(input);
-        assert_eq!(res, Done(&b""[..], ("19570", "")));
+        assert_eq!(res, Done("", ("19570", "")));
     }
 
     #[test]
     fn flt_base_w_digits_before_dot5() {
-        let input = &b"0.0"[..];
+        let input = "0.0";
         let res = flt_base_w_digits_bef_dot(input);
-        assert_eq!(res, Done(&b""[..], ("0", "0")));
+        assert_eq!(res, Done("", ("0", "0")));
     }
 
     #[test]
     fn flt_base_w_digits_before_dot6() {
-        let input = &b"0.0\nmore input"[..];
+        let input = "0.0\nmore input";
         let res = flt_base_w_digits_bef_dot(input);
-        assert_eq!(res, Done(&b"\nmore input"[..], ("0", "0")));
+        assert_eq!(res, Done("\nmore input", ("0", "0")));
     }
 
     #[test]
     fn flt_base_no_digits_before_dot() {
-        let input = &b"0.0"[..];
+        let input = "0.0";
         let res = flt_base_no_digits_bef_dot(input);
         assert_eq!(res, Error(ErrorKind::Tag));
     }
 
     #[test]
     fn flt_base_no_digits_before_dot2() {
-        let input = &b".0"[..];
+        let input = ".0";
         let res = flt_base_no_digits_bef_dot(input);
-        assert_eq!(res, Done(&b""[..], ("", "0")));
+        assert_eq!(res, Done("", ("", "0")));
     }
 
     #[test]
     fn flt_base_no_digits_before_dot3() {
-        let input = &b".\n"[..];
+        let input = ".\n";
         let res = flt_base_no_digits_bef_dot(input);
         assert_eq!(res, Error(ErrorKind::Digit));
     }
 
     #[test]
     fn flt_base_no_digits_before_dot4() {
-        let input = &b".456897"[..];
+        let input = ".456897";
         let res = flt_base_no_digits_bef_dot(input);
-        assert_eq!(res, Done(&b""[..], ("", "456897")));
+        assert_eq!(res, Done("", ("", "456897")));
     }
 
     #[test]
     fn flt_base_no_digits_before_dot5() {
-        let input = &b".456897more input here\n\nbye"[..];
+        let input = ".456897more input here\n\nbye";
         let res = flt_base_no_digits_bef_dot(input);
-        assert_eq!(res, Done(&b"more input here\n\nbye"[..], ("", "456897")));
+        assert_eq!(res, Done("more input here\n\nbye", ("", "456897")));
     }
 
     #[test]
     fn flt_base_no_digits_before_dot6() {
-        let input = &b".456897E-5"[..];
+        let input = ".456897E-5";
         let res = flt_base_no_digits_bef_dot(input);
-        assert_eq!(res, Done(&b"E-5"[..], ("", "456897")));
+        assert_eq!(res, Done("E-5", ("", "456897")));
     }
 
     #[test]
     fn flt_base_value() {
-        let input = &b".456897E-5"[..];
+        let input = ".456897E-5";
         let res = flt_base(input);
-        assert_eq!(res, Done(&b"E-5"[..], ("", "456897")));
+        assert_eq!(res, Done("E-5", ("", "456897")));
     }
 
     #[test]
     fn flt_base_value2() {
-        let input = &b"1.E-5"[..];
+        let input = "1.E-5";
         let res = flt_base(input);
-        assert_eq!(res, Done(&b"E-5"[..], ("1", "")));
+        assert_eq!(res, Done("E-5", ("1", "")));
     }
 
     #[test]
     fn flt_base_value3() {
-        let input = &b"134.456E-5"[..];
+        let input = "134.456E-5";
         let res = flt_base(input);
-        assert_eq!(res, Done(&b"E-5"[..], ("134", "456")));
+        assert_eq!(res, Done("E-5", ("134", "456")));
     }
 
     #[test]
     fn flt_base_value4() {
-        let input = &b"134."[..];
+        let input = "134.";
         let res = flt_base(input);
-        assert_eq!(res, Done(&b""[..], ("134", "")));
+        assert_eq!(res, Done("", ("134", "")));
     }
 
     #[test]
     fn flt_base_value5() {
-        let input = &b".0\n"[..];
+        let input = ".0\n";
         let res = flt_base(input);
-        assert_eq!(res, Done(&b"\n"[..], ("", "0")));
+        assert_eq!(res, Done("\n", ("", "0")));
     }
 
     #[test]
     fn flt_exponent_value() {
-        let input = &b"eee"[..];
+        let input = "eee";
         let res = flt_exponent(input);
         assert_eq!(res, Error(ErrorKind::Digit));
     }
 
     #[test]
     fn flt_exponent_value2() {
-        let input = &b"e-49"[..];
+        let input = "e-49";
         let res = flt_exponent(input);
-        assert_eq!(res, Done(&b""[..], ("-", "49")));
+        assert_eq!(res, Done("", ("-", "49")));
     }
 
     #[test]
     fn flt_exponent_value3() {
-        let input = &b"e49"[..];
+        let input = "e49";
         let res = flt_exponent(input);
-        assert_eq!(res, Done(&b""[..], ("+", "49")));
+        assert_eq!(res, Done("", ("+", "49")));
     }
 
     #[test]
     fn flt_exponent_value4() {
-        let input = &b"E+49"[..];
+        let input = "E+49";
         let res = flt_exponent(input);
-        assert_eq!(res, Done(&b""[..], ("+", "49")));
+        assert_eq!(res, Done("", ("+", "49")));
     }
 
     #[test]
     fn flt_exponent_value5() {
-        let input = &b"E-127\nmore\ninput\there"[..];
+        let input = "E-127\nmore\ninput\there";
         let res = flt_exponent(input);
-        assert_eq!(res, Done(&b"\nmore\ninput\there"[..], ("-", "127")));
+        assert_eq!(res, Done("\nmore\ninput\there", ("-", "127")));
     }
 
     #[test]
     fn flt_exponent_value6() {
-        let input = &b"e4.;xpto"[..];
+        let input = "e4.;xpto";
         let res = flt_exponent(input);
-        assert_eq!(res, Done(&b".;xpto"[..], ("+", "4")));
+        assert_eq!(res, Done(".;xpto", ("+", "4")));
     }
 
     #[test]
     fn flt32_as_scalar() {
-        let input = &b"1.E3\r\n\r\n"[..];
+        let input = "1.E3\r\n\r\n";
         let res = flt32_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating32(1.0E3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating32(1.0E3)));
     }
 
     #[test]
     fn flt32_as_scalar2() {
-        let input = &b"1.5\r\n\r\n"[..];
+        let input = "1.5\r\n\r\n";
         let res = flt32_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating32(1.5)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating32(1.5)));
     }
 
     #[test]
     fn flt32_as_scalar3() {
-        let input = &b"3.1415"[..];
+        let input = "3.1415";
         let res = flt32_scalar_value(input);
-        assert_eq!(res, Done(&b""[..], ScalarValue::Floating32(3.1415)));
+        assert_eq!(res, Done("", ScalarValue::Floating32(3.1415)));
     }
 
     #[test]
     fn flt64_as_scalar() {
-        let input = &b"1.E3L\r\n\r\n"[..];
+        let input = "1.E3L\r\n\r\n";
         let res = flt64_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating64(1.0E3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating64(1.0E3)));
     }
 
     #[test]
     fn flt64_as_scalar2() {
-        let input = &b"1.5L\r\n\r\n"[..];
+        let input = "1.5L\r\n\r\n";
         let res = flt64_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating64(1.5)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating64(1.5)));
     }
 
     #[test]
     fn flt64_as_scalar3() {
-        let input = &b"3.1415L"[..];
+        let input = "3.1415L";
         let res = flt64_scalar_value(input);
-        assert_eq!(res, Done(&b""[..], ScalarValue::Floating64(3.1415)));
+        assert_eq!(res, Done("", ScalarValue::Floating64(3.1415)));
     }
 
     #[test]
     fn flt_as_scalar() {
-        let input = &b"1.E3\r\n\r\n"[..];
+        let input = "1.E3\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating32(1.0E3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating32(1.0E3)));
     }
 
     #[test]
     fn flt_as_scalar2() {
-        let input = &b"-1.E3\r\n\r\n"[..];
+        let input = "-1.E3\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating32(-1.0E3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating32(-1.0E3)));
     }
 
     #[test]
     fn flt_as_scalar3() {
-        let input = &b"+1.E3\r\n\r\n"[..];
+        let input = "+1.E3\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating32(1.0E3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating32(1.0E3)));
     }
 
     #[test]
     fn flt_as_scalar4() {
-        let input = &b"1.E+3\r\n\r\n"[..];
+        let input = "1.E+3\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating32(1.0E3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating32(1.0E3)));
     }
 
     #[test]
     fn flt_as_scalar5() {
-        let input = &b"1.E-3\r\n\r\n"[..];
+        let input = "1.E-3\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating32(1.0E-3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating32(1.0E-3)));
     }
 
     #[test]
     fn flt_as_scalar6() {
-        let input = &b"+1.E-3\r\n\r\n"[..];
+        let input = "+1.E-3\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating32(1.0E-3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating32(1.0E-3)));
     }
 
     #[test]
     fn flt_as_scalar7() {
-        let input = &b"-1.E+3\r\n\r\n"[..];
+        let input = "-1.E+3\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating32(-1.0E3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating32(-1.0E3)));
     }
 
     #[test]
     fn flt_as_scalar8() {
-        let input = &b"-.25e0\r\n\r\n"[..];
+        let input = "-.25e0\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating32(-0.25)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating32(-0.25)));
     }
 
     #[test]
     fn flt_as_scalar9() {
-        let input = &b"-.25e-2\r\n\r\n"[..];
+        let input = "-.25e-2\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating32(-0.25e-2)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating32(-0.25e-2)));
     }
 
     #[test]
     fn flt_as_scalar10() {
-        let input = &b"1.5e1with more input"[..];
+        let input = "1.5e1with more input";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"with more input"[..], ScalarValue::Floating32(15.0)));
+        assert_eq!(res, Done("with more input", ScalarValue::Floating32(15.0)));
     }
 
     #[test]
     fn flt_as_scalar11() {
-        let input = &b".5\n"[..];
+        let input = ".5\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Floating32(0.5)));
+        assert_eq!(res, Done("\n", ScalarValue::Floating32(0.5)));
     }
 
     #[test]
     fn flt_as_scalar12() {
-        let input = &b"1.\n"[..];
+        let input = "1.\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Floating32(1.0)));
+        assert_eq!(res, Done("\n", ScalarValue::Floating32(1.0)));
     }
 
     #[test]
     fn flt_as_scalar13() {
-        let input = &b"1.5;\n"[..];
+        let input = "1.5;\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Floating32(1.5)));
+        assert_eq!(res, Done(";\n", ScalarValue::Floating32(1.5)));
     }
 
     #[test]
     fn flt_as_scalar14() {
-        let input = &b"-1.5;\n"[..];
+        let input = "-1.5;\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Floating32(-1.5)));
+        assert_eq!(res, Done(";\n", ScalarValue::Floating32(-1.5)));
     }
 
     #[test]
     fn flt_as_scalar15() {
-        let input = &b"-.1e2;\n"[..];
+        let input = "-.1e2;\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Floating32(-10.0)));
+        assert_eq!(res, Done(";\n", ScalarValue::Floating32(-10.0)));
     }
 
     #[test]
     fn flt_l_as_scalar() {
-        let input = &b"1.E3L\r\n\r\n"[..];
+        let input = "1.E3L\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating64(1.0E3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating64(1.0E3)));
     }
 
     #[test]
     fn flt_l_as_scalar2() {
-        let input = &b"-1.E3L\r\n\r\n"[..];
+        let input = "-1.E3L\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating64(-1.0E3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating64(-1.0E3)));
     }
 
     #[test]
     fn flt_l_as_scalar3() {
-        let input = &b"+1.E3L\r\n\r\n"[..];
+        let input = "+1.E3L\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating64(1.0E3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating64(1.0E3)));
     }
 
     #[test]
     fn flt_l_as_scalar4() {
-        let input = &b"1.E+3L\r\n\r\n"[..];
+        let input = "1.E+3L\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating64(1.0E3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating64(1.0E3)));
     }
 
     #[test]
     fn flt_l_as_scalar5() {
-        let input = &b"1.E-3L\r\n\r\n"[..];
+        let input = "1.E-3L\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating64(1.0E-3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating64(1.0E-3)));
     }
 
     #[test]
     fn flt_l_as_scalar6() {
-        let input = &b"+1.E-3L\r\n\r\n"[..];
+        let input = "+1.E-3L\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating64(1.0E-3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating64(1.0E-3)));
     }
 
     #[test]
     fn flt_l_as_scalar7() {
-        let input = &b"-1.E+3L\r\n\r\n"[..];
+        let input = "-1.E+3L\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating64(-1.0E3)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating64(-1.0E3)));
     }
 
     #[test]
     fn flt_l_as_scalar8() {
-        let input = &b"-.25e0L\r\n\r\n"[..];
+        let input = "-.25e0L\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating64(-0.25)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating64(-0.25)));
     }
 
     #[test]
     fn flt_l_as_scalar9() {
-        let input = &b"-.25e-2L\r\n\r\n"[..];
+        let input = "-.25e-2L\r\n\r\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\r\n\r\n"[..], ScalarValue::Floating64(-0.25e-2)));
+        assert_eq!(res, Done("\r\n\r\n", ScalarValue::Floating64(-0.25e-2)));
     }
 
     #[test]
     fn flt_l_as_scalar10() {
-        let input = &b"1.5e1Lwith more input"[..];
+        let input = "1.5e1Lwith more input";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"with more input"[..], ScalarValue::Floating64(15.0)));
+        assert_eq!(res, Done("with more input", ScalarValue::Floating64(15.0)));
     }
 
     #[test]
     fn flt_l_as_scalar11() {
-        let input = &b".5L\n"[..];
+        let input = ".5L\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Floating64(0.5)));
+        assert_eq!(res, Done("\n", ScalarValue::Floating64(0.5)));
     }
 
     #[test]
     fn flt_l_as_scalar12() {
-        let input = &b"1.L\n"[..];
+        let input = "1.L\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Floating64(1.0)));
+        assert_eq!(res, Done("\n", ScalarValue::Floating64(1.0)));
     }
 
     #[test]
     fn flt_l_as_scalar13() {
-        let input = &b"1.5L;\n"[..];
+        let input = "1.5L;\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Floating64(1.5)));
+        assert_eq!(res, Done(";\n", ScalarValue::Floating64(1.5)));
     }
 
     #[test]
     fn flt_l_as_scalar14() {
-        let input = &b"-1.5L;\n"[..];
+        let input = "-1.5L;\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Floating64(-1.5)));
+        assert_eq!(res, Done(";\n", ScalarValue::Floating64(-1.5)));
     }
 
     #[test]
     fn flt_l_as_scalar15() {
-        let input = &b"-.1e2L;\n"[..];
+        let input = "-.1e2L;\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Floating64(-10.0)));
+        assert_eq!(res, Done(";\n", ScalarValue::Floating64(-10.0)));
     }
 
     #[test]
     fn flt_l_as_scalar16() {
-        let input = &b"4503599627370496.L;\n"[..];
+        let input = "4503599627370496.L;\n";
         let res = flt_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Floating64(4503599627370496.0)));
+        assert_eq!(res, Done(";\n", ScalarValue::Floating64(4503599627370496.0)));
     }
 
     #[test]
     fn integer32_scalar_value() {
-        let input = &b"14\n"[..];
+        let input = "14\n";
         let res = int32_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer32(14)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer32(14)));
     }
 
     #[test]
     fn integer64_scalar_value() {
-        let input = &b"14L\n"[..];
+        let input = "14L\n";
         let res = int64_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer64(14)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer64(14)));
     }
 
     #[test]
     fn integer_scalar_value() {
-        let input = &b"-------"[..];
+        let input = "-------";
         let res = int_scalar_value(input);
         assert_eq!(res, Error(ErrorKind::Alt));
     }
 
     #[test]
     fn integer_scalar_value2() {
-        let input = &b"0\n"[..];
+        let input = "0\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer32(0)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer32(0)));
     }
 
     #[test]
     fn integer_scalar_value3() {
-        let input = &b"14\n"[..];
+        let input = "14\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer32(14)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer32(14)));
     }
 
     #[test]
     fn integer_scalar_value4() {
-        let input = &b"-59\n"[..];
+        let input = "-59\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer32(-59)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer32(-59)));
     }
 
     #[test]
     fn integer_scalar_value5() {
-        let input = &b"+74\n"[..];
+        let input = "+74\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer32(74)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer32(74)));
     }
 
     #[test]
     fn integer_scalar_value6() {
-        let input = &b"-0\n"[..];
+        let input = "-0\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer32(0)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer32(0)));
     }
 
     #[test]
     fn integer_scalar_value7() {
-        let input = &b"+0\n"[..];
+        let input = "+0\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer32(0)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer32(0)));
     }
 
     #[test]
     fn integer_l_scalar_value() {
-        let input = &b"+0L\n"[..];
+        let input = "+0L\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer64(0)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer64(0)));
     }
 
     #[test]
     fn integer_l_scalar_value2() {
-        let input = &b"-55586L\n"[..];
+        let input = "-55586L\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer64(-55586)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer64(-55586)));
     }
 
     #[test]
     fn integer_l_scalar_value3() {
-        let input = &b"55586L\n"[..];
+        let input = "55586L\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer64(55586)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer64(55586)));
     }
 
     #[test]
     fn integer_l_scalar_value4() {
-        let input = &b"+55586L\n"[..];
+        let input = "+55586L\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer64(55586)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer64(55586)));
     }
 
     #[test]
     fn integer_l_scalar_value5() {
-        let input = &b"-0L\n"[..];
+        let input = "-0L\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer64(0)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer64(0)));
     }
 
     #[test]
     fn integer_l_scalar_value6() {
-        let input = &b"9223372000000000000L\n"[..];
+        let input = "9223372000000000000L\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b"\n"[..], ScalarValue::Integer64(9223372000000000000i64)));
+        assert_eq!(res, Done("\n", ScalarValue::Integer64(9223372000000000000i64)));
     }
 
     #[test]
     fn boolean_true_value() {
-        let input = &b"TRUE;"[..];
+        let input = "TRUE;";
         let res = bool_true_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Boolean(true)));
+        assert_eq!(res, Done(";", ScalarValue::Boolean(true)));
     }
 
     #[test]
     fn boolean_true_value2() {
-        let input = &b"TrUe;"[..];
+        let input = "TrUe;";
         let res = bool_true_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Boolean(true)));
+        assert_eq!(res, Done(";", ScalarValue::Boolean(true)));
     }
 
     #[test]
     fn boolean_true_value3() {
-        let input = &b"YES;"[..];
+        let input = "YES;";
         let res = bool_true_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Boolean(true)));
+        assert_eq!(res, Done(";", ScalarValue::Boolean(true)));
     }
 
     #[test]
     fn boolean_true_value4() {
-        let input = &b"yEs;"[..];
+        let input = "yEs;";
         let res = bool_true_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Boolean(true)));
+        assert_eq!(res, Done(";", ScalarValue::Boolean(true)));
     }
 
     #[test]
     fn boolean_false_value() {
-        let input = &b"FALSE;"[..];
+        let input = "FALSE;";
         let res = bool_false_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Boolean(false)));
+        assert_eq!(res, Done(";", ScalarValue::Boolean(false)));
     }
 
     #[test]
     fn boolean_false_value2() {
-        let input = &b"FaLsE;"[..];
+        let input = "FaLsE;";
         let res = bool_false_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Boolean(false)));
+        assert_eq!(res, Done(";", ScalarValue::Boolean(false)));
     }
 
     #[test]
     fn boolean_false_value3() {
-        let input = &b"NO;"[..];
+        let input = "NO;";
         let res = bool_false_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Boolean(false)));
+        assert_eq!(res, Done(";", ScalarValue::Boolean(false)));
     }
 
     #[test]
     fn boolean_false_value4() {
-        let input = &b"nO;"[..];
+        let input = "nO;";
         let res = bool_false_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Boolean(false)));
+        assert_eq!(res, Done(";", ScalarValue::Boolean(false)));
     }
 
     #[test]
     fn bool_scalar_value() {
-        let input = &b"False;"[..];
+        let input = "False;";
         let res = boolean_scalar_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Boolean(false)));
+        assert_eq!(res, Done(";", ScalarValue::Boolean(false)));
     }
 
     #[test]
     fn bool_scalar_value2() {
-        let input = &b"true;"[..];
+        let input = "true;";
         let res = boolean_scalar_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Boolean(true)));
+        assert_eq!(res, Done(";", ScalarValue::Boolean(true)));
     }
 
     #[test]
     fn bool_scalar_value3() {
-        let input = &b"yeS;"[..];
+        let input = "yeS;";
         let res = boolean_scalar_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Boolean(true)));
+        assert_eq!(res, Done(";", ScalarValue::Boolean(true)));
     }
 
     #[test]
     fn bool_scalar_value4() {
-        let input = &b"no;"[..];
+        let input = "no;";
         let res = boolean_scalar_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Boolean(false)));
+        assert_eq!(res, Done(";", ScalarValue::Boolean(false)));
     }
 
     #[test]
     fn bool_array_elems() {
-        let input = &b"true, true, no, yes, false\n\n];"[..];
+        let input = "true, true, no, yes, false\n\n];";
         let res = boolean_array_elements(input);
-        assert_eq!(res, Done(&b"];"[..], vec![
+        assert_eq!(res, Done("];", vec![
             Value::Svalue(ScalarValue::Boolean(true)),
             Value::Svalue(ScalarValue::Boolean(true)),
             Value::Svalue(ScalarValue::Boolean(false)),
@@ -1926,133 +1915,133 @@ mod test {
 
     #[test]
     fn bool_array_elems2() {
-        let input = &b"true]"[..];
+        let input = "true]";
         let res = boolean_array_elements(input);
-        assert_eq!(res, Done(&b"]"[..], vec![Value::Svalue(ScalarValue::Boolean(true))]));
+        assert_eq!(res, Done("]", vec![Value::Svalue(ScalarValue::Boolean(true))]));
     }
 
     #[test]
     fn bool_array_elems3() {
-        let input = &b"true, false/*test*/\n//lala\n];"[..];
+        let input = "true, false/*test*/\n//lala\n];";
         let res = boolean_array_elements(input);
-        assert_eq!(res, Done(&b"];"[..], vec![
+        assert_eq!(res, Done("];", vec![
             Value::Svalue(ScalarValue::Boolean(true)),
             Value::Svalue(ScalarValue::Boolean(false))]));
     }
 
     #[test]
     fn string_array_elems() {
-        let input = &b"\"a\", \"1\", \"b\"\n];"[..];
+        let input = "\"a\", \"1\", \"b\"\n];";
         let res = str_array_elements(input);
-        assert_eq!(res, Done(&b"];"[..], vec![Value::Svalue(ScalarValue::Str("a".to_string())),
+        assert_eq!(res, Done("];", vec![Value::Svalue(ScalarValue::Str("a".to_string())),
                                               Value::Svalue(ScalarValue::Str("1".to_string())),
                                               Value::Svalue(ScalarValue::Str("b".to_string()))]));
     }
 
     #[test]
     fn string_array_elems2() {
-        let input = &b"\"a\"\"1\"/**/\"b\"\n];"[..];
+        let input = "\"a\"\"1\"/**/\"b\"\n];";
         let res = str_array_elements(input);
-        assert_eq!(res, Done(&b"];"[..], vec![Value::Svalue(ScalarValue::Str("a1b".to_string()))]));
+        assert_eq!(res, Done("];", vec![Value::Svalue(ScalarValue::Str("a1b".to_string()))]));
     }
 
     #[test]
     fn flt64_array_elems() {
-        let input = &b"1.E4L, 5.0L  , 0.5L];"[..];
+        let input = "1.E4L, 5.0L  , 0.5L];";
         let res = flt64_array_elements(input);
-        assert_eq!(res, Done(&b"];"[..], vec![Value::Svalue(ScalarValue::Floating64(1.0e4)),
+        assert_eq!(res, Done("];", vec![Value::Svalue(ScalarValue::Floating64(1.0e4)),
                                               Value::Svalue(ScalarValue::Floating64(5.0)),
                                               Value::Svalue(ScalarValue::Floating64(0.5))]));
     }
 
     #[test]
     fn flt64_array_elems2() {
-        let input = &b"-5.0e-1L];"[..];
+        let input = "-5.0e-1L];";
         let res = flt64_array_elements(input);
-        assert_eq!(res, Done(&b"];"[..], vec![Value::Svalue(ScalarValue::Floating64(-5.0e-1))]));
+        assert_eq!(res, Done("];", vec![Value::Svalue(ScalarValue::Floating64(-5.0e-1))]));
     }
 
     #[test]
     fn flt32_array_elems() {
-        let input = &b"1.E4, 5.0  , 0.5];"[..];
+        let input = "1.E4, 5.0  , 0.5];";
         let res = flt32_array_elements(input);
-        assert_eq!(res, Done(&b"];"[..], vec![Value::Svalue(ScalarValue::Floating32(1.0e4)),
+        assert_eq!(res, Done("];", vec![Value::Svalue(ScalarValue::Floating32(1.0e4)),
                                               Value::Svalue(ScalarValue::Floating32(5.0)),
                                               Value::Svalue(ScalarValue::Floating32(0.5))]));
     }
 
     #[test]
     fn flt32_array_elems2() {
-        let input = &b"-5.0e-1];"[..];
+        let input = "-5.0e-1];";
         let res = flt32_array_elements(input);
-        assert_eq!(res, Done(&b"];"[..], vec![Value::Svalue(ScalarValue::Floating32(-5.0e-1))]));
+        assert_eq!(res, Done("];", vec![Value::Svalue(ScalarValue::Floating32(-5.0e-1))]));
     }
 
     #[test]
     fn int64_array_elems() {
-        let input = &b"1L, 5L  , 6L];"[..];
+        let input = "1L, 5L  , 6L];";
         let res = int64_array_elements(input);
-        assert_eq!(res, Done(&b"];"[..], vec![Value::Svalue(ScalarValue::Integer64(1)),
+        assert_eq!(res, Done("];", vec![Value::Svalue(ScalarValue::Integer64(1)),
                                               Value::Svalue(ScalarValue::Integer64(5)),
                                               Value::Svalue(ScalarValue::Integer64(6))]));
     }
 
     #[test]
     fn int64_array_elems2() {
-        let input = &b"1L];"[..];
+        let input = "1L];";
         let res = int64_array_elements(input);
-        assert_eq!(res, Done(&b"];"[..], vec![Value::Svalue(ScalarValue::Integer64(1))]));
+        assert_eq!(res, Done("];", vec![Value::Svalue(ScalarValue::Integer64(1))]));
     }
 
     #[test]
     fn int32_array_elems() {
-        let input = &b"1, 5  , 6];"[..];
+        let input = "1, 5  , 6];";
         let res = int32_array_elements(input);
-        assert_eq!(res, Done(&b"];"[..], vec![Value::Svalue(ScalarValue::Integer32(1)),
+        assert_eq!(res, Done("];", vec![Value::Svalue(ScalarValue::Integer32(1)),
                                               Value::Svalue(ScalarValue::Integer32(5)),
                                               Value::Svalue(ScalarValue::Integer32(6))]));
     }
 
     #[test]
     fn int32_array_elems2() {
-        let input = &b"1];"[..];
+        let input = "1];";
         let res = int32_array_elements(input);
-        assert_eq!(res, Done(&b"];"[..], vec![Value::Svalue(ScalarValue::Integer32(1))]));
+        assert_eq!(res, Done("];", vec![Value::Svalue(ScalarValue::Integer32(1))]));
     }
 
     #[test]
     fn empty_array() {
-        let input = &b"[\n\n\n\n]\n;"[..];
+        let input = "[\n\n\n\n]\n;";
         let res = array(input);
-        assert_eq!(res, Done(&b"\n;"[..], Value::Array(Vec::new())));
+        assert_eq!(res, Done("\n;", Value::Array(Vec::new())));
     }
 
     #[test]
     fn empty_array2() {
-        let input = &b"[]\n;"[..];
+        let input = "[]\n;";
         let res = array(input);
-        assert_eq!(res, Done(&b"\n;"[..], Value::Array(Vec::new())));
+        assert_eq!(res, Done("\n;", Value::Array(Vec::new())));
     }
 
     #[test]
     fn bad_array() {
-        let input = &b"[true, \"a\", 14, 19, 5.0e1];\n"[..];
+        let input = "[true, \"a\", 14, 19, 5.0e1];\n";
         let res = array(input);
         assert_eq!(res, Error(ErrorKind::Alt));
     }
 
     #[test]
     fn bad_array2() {
-        let input = &b"[\"a bad array\", 12, 3.0e-1, true];\n"[..];
+        let input = "[\"a bad array\", 12, 3.0e-1, true];\n";
         let res = array(input);
         assert_eq!(res, Error(ErrorKind::Alt));
     }
 
     #[test]
     fn bool_array() {
-        let input = &b"[  true\t, yes//a test\n, \n\nfalse\n]\n;"[..];
+        let input = "[  true\t, yes//a test\n, \n\nfalse\n]\n;";
         let res = array(input);
-        assert_eq!(res, Done(&b"\n;"[..], Value::Array(vec![
+        assert_eq!(res, Done("\n;", Value::Array(vec![
             Value::Svalue(ScalarValue::Boolean(true)),
             Value::Svalue(ScalarValue::Boolean(true)),
             Value::Svalue(ScalarValue::Boolean(false))])));
@@ -2060,9 +2049,9 @@ mod test {
 
     #[test]
     fn str_array() {
-        let input = &b"[  \"a\", \"b\"//a test\n,\n\"c\\\\d\"\n]\n;"[..];
+        let input = "[  \"a\", \"b\"//a test\n,\n\"c\\\\d\"\n]\n;";
         let res = array(input);
-        assert_eq!(res, Done(&b"\n;"[..], Value::Array(vec![
+        assert_eq!(res, Done("\n;", Value::Array(vec![
             Value::Svalue(ScalarValue::Str("a".to_string())),
             Value::Svalue(ScalarValue::Str("b".to_string())),
             Value::Svalue(ScalarValue::Str("c\\d".to_string()))])));
@@ -2070,9 +2059,9 @@ mod test {
 
     #[test]
     fn flt64_array() {
-        let input = &b"[1.E4L, 5.0L  , 0.5L];"[..];
+        let input = "[1.E4L, 5.0L  , 0.5L];";
         let res = array(input);
-        assert_eq!(res, Done(&b";"[..], Value::Array(vec![
+        assert_eq!(res, Done(";", Value::Array(vec![
             Value::Svalue(ScalarValue::Floating64(1.0e4)),
             Value::Svalue(ScalarValue::Floating64(5.0)),
             Value::Svalue(ScalarValue::Floating64(0.5))])));
@@ -2080,9 +2069,9 @@ mod test {
 
     #[test]
     fn flt32_array() {
-        let input = &b"[1.E4, 5.0  , 0.5];"[..];
+        let input = "[1.E4, 5.0  , 0.5];";
         let res = array(input);
-        assert_eq!(res, Done(&b";"[..], Value::Array(vec![
+        assert_eq!(res, Done(";", Value::Array(vec![
             Value::Svalue(ScalarValue::Floating32(1.0e4)),
             Value::Svalue(ScalarValue::Floating32(5.0)),
             Value::Svalue(ScalarValue::Floating32(0.5))])));
@@ -2090,9 +2079,9 @@ mod test {
 
     #[test]
     fn int64_array() {
-        let input = &b"[1L, 5L  , 55L];"[..];
+        let input = "[1L, 5L  , 55L];";
         let res = array(input);
-        assert_eq!(res, Done(&b";"[..], Value::Array(vec![
+        assert_eq!(res, Done(";", Value::Array(vec![
             Value::Svalue(ScalarValue::Integer64(1)),
             Value::Svalue(ScalarValue::Integer64(5)),
             Value::Svalue(ScalarValue::Integer64(55))])));
@@ -2100,9 +2089,9 @@ mod test {
 
     #[test]
     fn int32_array() {
-        let input = &b"[1, 5  , 55];"[..];
+        let input = "[1, 5  , 55];";
         let res = array(input);
-        assert_eq!(res, Done(&b";"[..], Value::Array(vec![
+        assert_eq!(res, Done(";", Value::Array(vec![
             Value::Svalue(ScalarValue::Integer32(1)),
             Value::Svalue(ScalarValue::Integer32(5)),
             Value::Svalue(ScalarValue::Integer32(55))])));
@@ -2110,72 +2099,72 @@ mod test {
 
     #[test]
     fn scalar_val() {
-        let input = &b"true;"[..];
+        let input = "true;";
         let res = scalar_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Boolean(true)));
+        assert_eq!(res, Done(";", ScalarValue::Boolean(true)));
     }
 
     #[test]
     fn scalar_val2() {
-        let input = &b"443.5e+2L;"[..];
+        let input = "443.5e+2L;";
         let res = scalar_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Floating64(443.5E2)));
+        assert_eq!(res, Done(";", ScalarValue::Floating64(443.5E2)));
     }
 
     #[test]
     fn scalar_val3() {
-        let input = &b"443.5;"[..];
+        let input = "443.5;";
         let res = scalar_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Floating32(443.5)));
+        assert_eq!(res, Done(";", ScalarValue::Floating32(443.5)));
     }
 
     #[test]
     fn scalar_val4() {
-        let input = &b"-32;"[..];
+        let input = "-32;";
         let res = scalar_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Integer32(-32)));
+        assert_eq!(res, Done(";", ScalarValue::Integer32(-32)));
     }
 
     #[test]
     fn scalar_val5() {
-        let input = &b"64L;"[..];
+        let input = "64L;";
         let res = scalar_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Integer64(64)));
+        assert_eq!(res, Done(";", ScalarValue::Integer64(64)));
     }
 
     #[test]
     fn scalar_val6() {
-        let input = &b"\"a string literal\";"[..];
+        let input = "\"a string literal\";";
         let res = scalar_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Str("a string literal".to_string())));
+        assert_eq!(res, Done(";", ScalarValue::Str("a string literal".to_string())));
     }
 
     #[test]
     fn scalar_val7() {
-        let input = &b"\"he said: \\\"hello\\\"\";"[..];
+        let input = "\"he said: \\\"hello\\\"\";";
         let res = scalar_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Str("he said: \"hello\"".to_string())));
+        assert_eq!(res, Done(";", ScalarValue::Str("he said: \"hello\"".to_string())));
     }
 
     #[test]
     fn scalar_val8() {
-        let input = &b"\"he\"\" said:\" \r\n//lala\r\n\" \\\"hello\\\"\";"[..];
+        let input = "\"he\"\" said:\" \r\n//lala\r\n\" \\\"hello\\\"\";";
         let res = scalar_value(input);
-        assert_eq!(res, Done(&b";"[..], ScalarValue::Str("he said: \"hello\"".to_string())));
+        assert_eq!(res, Done(";", ScalarValue::Str("he said: \"hello\"".to_string())));
     }
 
     #[test]
     fn single_value() {
-        let a_value = &b"\"USA\"\n\n;"[..];
+        let a_value = "\"USA\"\n\n;";
         let res = value(a_value);
-        assert_eq!(res, Done(&b";"[..], Value::Svalue(ScalarValue::Str("USA".to_string()))));
+        assert_eq!(res, Done(";", Value::Svalue(ScalarValue::Str("USA".to_string()))));
     }
 
     #[test]
     fn single_value_list() {
-        let a_value = &b"(1, 2, 3);"[..];
+        let a_value = "(1, 2, 3);";
         let res = value(a_value);
-        assert_eq!(res, Done(&b";"[..],
+        assert_eq!(res, Done(";",
                              Value::List(vec![
                                  Value::Svalue(ScalarValue::Integer32(1)),
                                  Value::Svalue(ScalarValue::Integer32(2)),
@@ -2184,9 +2173,9 @@ mod test {
 
     #[test]
     fn single_value_array() {
-        let a_value = &b"[1, 2, 3];"[..];
+        let a_value = "[1, 2, 3];";
         let res = value(a_value);
-        assert_eq!(res, Done(&b";"[..],
+        assert_eq!(res, Done(";",
                              Value::Array(vec![
                                  Value::Svalue(ScalarValue::Integer32(1)),
                                  Value::Svalue(ScalarValue::Integer32(2)),
@@ -2195,7 +2184,7 @@ mod test {
 
     #[test]
     fn single_value_group() {
-        let a_value = &b"{ x = 1; y = 2; };"[..];
+        let a_value = "{ x = 1; y = 2; };";
         let res = value(a_value);
 
         let mut grp = SettingsList::new();
@@ -2204,30 +2193,30 @@ mod test {
         grp.insert("y".to_string(),
                    Setting::new("y".to_string(), Value::Svalue(ScalarValue::Integer32(2))));
 
-        assert_eq!(res, Done(&b";"[..], Value::Group(grp)));
+        assert_eq!(res, Done(";", Value::Group(grp)));
     }
 
     #[test]
     fn empty_group() {
-        let a_group = &b"{}"[..];
+        let a_group = "{}";
         let res = group(a_group);
 
         let grp = SettingsList::new();
-        assert_eq!(res, Done(&b""[..], grp));
+        assert_eq!(res, Done("", grp));
     }
 
     #[test]
     fn blank_group() {
-        let a_group = &b"{  \n\t//comment\n}"[..];
+        let a_group = "{  \n\t//comment\n}";
         let res = group(a_group);
 
         let grp = SettingsList::new();
-        assert_eq!(res, Done(&b""[..], grp));
+        assert_eq!(res, Done("", grp));
     }
 
     #[test]
     fn single_group() {
-        let a_group = &b"{ x = 1; y = 2; }"[..];
+        let a_group = "{ x = 1; y = 2; }";
         let res = group(a_group);
 
         let mut grp = SettingsList::new();
@@ -2236,14 +2225,14 @@ mod test {
         grp.insert("y".to_string(),
                    Setting::new("y".to_string(), Value::Svalue(ScalarValue::Integer32(2))));
 
-        assert_eq!(res, Done(&b""[..], grp));
+        assert_eq!(res, Done("", grp));
     }
 
     #[test]
     fn single_list() {
-        let a_list = &b"(1, 2, 3)"[..];
+        let a_list = "(1, 2, 3)";
         let res = list(a_list);
-        assert_eq!(res, Done(&b""[..],
+        assert_eq!(res, Done("",
                              Value::List(vec![
                                  Value::Svalue(ScalarValue::Integer32(1)),
                                  Value::Svalue(ScalarValue::Integer32(2)),
@@ -2257,25 +2246,25 @@ mod test {
     #[test]
     fn blank_conf() {
         let confs = vec![
-            conf(&b"     \n"[..]),
-            conf(&b"\t\t"[..]),
-            conf(&b"\r"[..]),
-            conf(&b"\r\n   \t  \t\r\n\n\n\n\r\r\r\r  \n"[..])];
+            conf("     \n"),
+            conf("\t\t"),
+            conf("\r"),
+            conf("\r\n   \t  \t\r\n\n\n\n\r\r\r\r  \n")];
 
         for pconf in confs.into_iter() {
-            assert_eq!(pconf, Done(&b""[..], Config::new(SettingsList::new())));
+            assert_eq!(pconf, Done("", Config::new(SettingsList::new())));
         }
     }
 
     #[test]
     fn empty_conf() {
-        let parsed = conf(&b""[..]);
-        assert_eq!(parsed, Done(&b""[..], Config::new(SettingsList::new())));
+        let parsed = conf("");
+        assert_eq!(parsed, Done("", Config::new(SettingsList::new())));
     }
 
     #[test]
     fn only_comments() {
-        let parsed = conf(&concat!(
+        let parsed = conf(concat!(
             "// This conf consists of comments and nothing else.\n",
             "// Well, I mean, comments and newlines, that is.\n",
             "\n\n\n\n\n",
@@ -2290,14 +2279,14 @@ mod test {
             "// For example, this won't start a block comment: /* no, it doesn't work! /**/\n",
             " # Single line comments can also start with `#` rather than `//`.\n",
             "\r\n\r\n\r\n\r\n                                 ",
-            "/// That's it for now. Bye!\n\n\n").as_bytes()[..]);
+            "/// That's it for now. Bye!\n\n\n"));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(SettingsList::new())));
+        assert_eq!(parsed, Done("", Config::new(SettingsList::new())));
     }
 
     #[test]
     fn conf_boolean_scalar() {
-        let parsed = conf(&b"windows=NO;\nlinux = true;\nUNIX\t=\nFaLsE;\n"[..]);
+        let parsed = conf("windows=NO;\nlinux = true;\nUNIX\t=\nFaLsE;\n");
 
         let mut expected = SettingsList::new();
         expected.insert("windows".to_string(),
@@ -2310,13 +2299,13 @@ mod test {
                         Setting::new("UNIX".to_string(),
                                      Value::Svalue(ScalarValue::Boolean(false))));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_integer32_scalar() {
-        let parsed = conf(&concat!("\n\nmiles :  3;mpg=27;\nweight_lbs = \t44;\t\n\n",
-                                   "something_big = 2000000000;").as_bytes()[..]);
+        let parsed = conf(concat!("\n\nmiles :  3;mpg=27;\nweight_lbs = \t44;\t\n\n",
+                                  "something_big = 2000000000;"));
 
         let mut expected = SettingsList::new();
         expected.insert("miles".to_string(),
@@ -2332,15 +2321,15 @@ mod test {
                         Setting::new("something_big".to_string(),
                                      Value::Svalue(ScalarValue::Integer32(2000000000))));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_integer64_scalar() {
-        let parsed = conf(&concat!("miles: 300000000000000L\r\n;",
+        let parsed = conf(concat!("miles: 300000000000000L\r\n;",
                                    "\r\n\n\nmpg=2L;",
                                    "weight_lbs=922000000000000000L;\n",
-                                   "loan_amount : \r\n8000000000000000001L;\t\t").as_bytes()[..]);
+                                   "loan_amount : \r\n8000000000000000001L;\t\t"));
 
         let mut expected = SettingsList::new();
         expected.insert("miles".to_string(),
@@ -2357,12 +2346,12 @@ mod test {
                                      Value::Svalue(ScalarValue::Integer64(
                                          8000000000000000001i64))));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_flt32_scalar() {
-        let parsed = conf(&concat!("width = 5.0e0;\r\n",
+        let parsed = conf(concat!("width = 5.0e0;\r\n",
                                    "height=1040.0e-1;\r\n",
                                    "misc=\t2.5e+4;\r\n",
                                    "height_x=4.0e3;\r\n",
@@ -2373,7 +2362,7 @@ mod test {
                                    "lalala = .5e-5;\r\n",
                                    "num = 2.e1;\r\n",
                                    "num_ = 2.e-2;\r\n",
-                                   "num__ = 2.e+2;\r\n").as_bytes()[..]);
+                                   "num__ = 2.e+2;\r\n"));
 
         let mut expected = SettingsList::new();
         expected.insert("width".to_string(),
@@ -2424,12 +2413,12 @@ mod test {
                         Setting::new("num__".to_string(),
                                      Value::Svalue(ScalarValue::Floating32(2.0e+2))));
 
-      assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+      assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_flt64_scalar() {
-        let parsed = conf(&b"miles: 55937598585.5L;\tdistance:10000000000.25L;"[..]);
+        let parsed = conf("miles: 55937598585.5L;\tdistance:10000000000.25L;");
 
         let mut expected = SettingsList::new();
         expected.insert("miles".to_string(),
@@ -2439,31 +2428,31 @@ mod test {
                         Setting::new("distance".to_string(),
                                      Value::Svalue(ScalarValue::Floating64(10000000000.25))));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_simple_str() {
-        let parsed = conf(&b"\n\nserver_name\t= \"testing.org\"\r\n\r\n;"[..]);
+        let parsed = conf("\n\nserver_name\t= \"testing.org\"\r\n\r\n;");
 
         let mut expected = SettingsList::new();
         expected.insert("server_name".to_string(),
                         Setting::new("server_name".to_string(),
                                      Value::Svalue(ScalarValue::Str("testing.org".to_string()))));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_str() {
         let parsed = conf(
-            &concat!("\n\n\nserver_name\t= \"testing.org\"\r\n\r\n;\r\n\r\n",
+            concat!("\n\n\nserver_name\t= \"testing.org\"\r\n\r\n;\r\n\r\n",
                      "escaped_str=\"Just a \\\"test\\\" with escapes.\";",
                      "str_w_prime = \"He said: 'Hello!'\";\n",
                      "quotes_everywhere = \"\\\"\\\"\";\n",
                      "backslashes = \"A backslash in quotes: \\\"\\\\\\\"\";\n",
                      "i=\"escaped_str=\\\"Just a \\\\\\\"test\\\\\\\" ",
-                     "with escapes.\\\";\";").as_bytes()[..]);
+                     "with escapes.\\\";\";"));
 
         let mut expected = SettingsList::new();
         expected.insert("server_name".to_string(),
@@ -2502,18 +2491,18 @@ mod test {
                                              "escaped_str=\"Just a \\\"test\\\" with escapes.\";"
                                                  .to_string()))));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_multiline_str() {
         let parsed = conf(
-            &concat!("\n\n\nserver_name\t= \"testing.org\"\r\n\r\n;\r\n\r\n",
+            concat!("\n\n\nserver_name\t= \"testing.org\"\r\n\r\n;\r\n\r\n",
                      "big_str = \"This is a very big string. It will span multiple lines.\"\n",
                      "          \" This line is still part of our very big string.\"\n",
                      "          \" We could do this all day\"\". Notice we can also use a single\"",
                      "          \" space to separate string literals components,\"\t\"",
-                     " or even tabs!\"; another_str = \"bye\";").as_bytes()[..]);
+                     " or even tabs!\"; another_str = \"bye\";"));
 
         let big_str = concat!("This is a very big string. It will span multiple lines.",
                               " This line is still part of our very big string.",
@@ -2531,12 +2520,12 @@ mod test {
                         Setting::new("another_str".to_string(),
                                      Value::Svalue(ScalarValue::Str("bye".to_string()))));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_empty_array() {
-        let parsed = conf(&b"array_one = [\n\n\n\n\n];\r\narray_two=[];"[..]);
+        let parsed = conf("array_one = [\n\n\n\n\n];\r\narray_two=[];");
 
         let mut expected = SettingsList::new();
         expected.insert("array_one".to_string(),
@@ -2544,12 +2533,12 @@ mod test {
         expected.insert("array_two".to_string(),
                         Setting::new("array_two".to_string(), Value::Array(Vec::new())));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_boolean_array() {
-        let parsed = conf(&b"my_array = [true, true, YEs, No, FaLSE, false, true];"[..]);
+        let parsed = conf("my_array = [true, true, YEs, No, FaLSE, false, true];");
 
         let mut expected = SettingsList::new();
         expected.insert("my_array".to_string(),
@@ -2563,12 +2552,12 @@ mod test {
                                          Value::Svalue(ScalarValue::Boolean(false)),
                                          Value::Svalue(ScalarValue::Boolean(true))])));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_integer32_array() {
-        let parsed = conf(&b"my_array: [10, 11, 12];\narray = [1];\n"[..]);
+        let parsed = conf("my_array: [10, 11, 12];\narray = [1];\n");
 
         let mut expected = SettingsList::new();
         expected.insert("my_array".to_string(),
@@ -2581,12 +2570,12 @@ mod test {
                         Setting::new("array".to_string(),
                                      Value::Array(vec![Value::Svalue(ScalarValue::Integer32(1))])));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_integer64_array() {
-        let parsed = conf(&b"a=[9000000000000000000L,8000000000000000002L,5L];\nb=[5L,6L,7L];"[..]);
+        let parsed = conf("a=[9000000000000000000L,8000000000000000002L,5L];\nb=[5L,6L,7L];");
 
         let mut expected = SettingsList::new();
         expected.insert("a".to_string(),
@@ -2604,12 +2593,12 @@ mod test {
                                          Value::Svalue(ScalarValue::Integer64(6)),
                                          Value::Svalue(ScalarValue::Integer64(7))])));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_flt32_array() {
-        let parsed = conf(&b"a=[4.5, 0.5, 0.25]\n;\nb = [5.0e-1, 1.0e0];\n\n"[..]);
+        let parsed = conf("a=[4.5, 0.5, 0.25]\n;\nb = [5.0e-1, 1.0e0];\n\n");
 
         let mut expected = SettingsList::new();
         expected.insert("a".to_string(),
@@ -2625,12 +2614,12 @@ mod test {
                                          Value::Svalue(ScalarValue::Floating32(5.0e-1)),
                                          Value::Svalue(ScalarValue::Floating32(1.0))])));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_flt64_array() {
-        let parsed = conf(&b"a=[55937598585.5L,10000000000.25L];"[..]);
+        let parsed = conf("a=[55937598585.5L,10000000000.25L];");
 
         let mut expected = SettingsList::new();
         expected.insert("a".to_string(),
@@ -2639,13 +2628,13 @@ mod test {
                                          Value::Svalue(ScalarValue::Floating64(55937598585.5)),
                                          Value::Svalue(ScalarValue::Floating64(10000000000.25))])));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_str_arrays() {
         let parsed = conf(
-            &concat!("my_strs = [                          ",
+            concat!("my_strs = [                          ",
                      "\"testing.org\"                , ",
                      "\"Just a \\\"test\\\" with escapes.\",",
                      "\"He said: 'Hello!'\", ",
@@ -2653,7 +2642,7 @@ mod test {
                      "\"A backslash in quotes: \\\"\\\\\\\"\",",
                      "\"escaped_str=\\\"Just a \\\\\\\"test\\\\\\\" with escapes.\\\";\", ",
                      "\"\\n\\r\\t\\\"\"\n\n]\n;\n",
-                     "my_simple_strs = [\"hello\", \"world\"];\n").as_bytes()[..]);
+                     "my_simple_strs = [\"hello\", \"world\"];\n"));
 
         let mut expected = SettingsList::new();
         expected.insert("my_strs".to_string(),
@@ -2679,33 +2668,33 @@ mod test {
                                          Value::Svalue(ScalarValue::Str("hello".to_string())),
                                          Value::Svalue(ScalarValue::Str("world".to_string()))])));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_simple_bad_array() {
-        let input = b"bad_array = [\"a bad array\", 12, 3.0e-1, true];\n";
-        let parsed = conf(&input[..]);
+        let input = "bad_array = [\"a bad array\", 12, 3.0e-1, true];\n";
+        let parsed = conf(input);
         assert_eq!(parsed, Error(ErrorKind::Eof));
     }
 
     #[test]
     fn conf_bad_array() {
-        let input = b"bad_array = [\"a bad array\", (\"array\", 5, 4, 2)];\n";
-        let parsed = conf(&input[..]);
+        let input = "bad_array = [\"a bad array\", (\"array\", 5, 4, 2)];\n";
+        let parsed = conf(input);
         assert_eq!(parsed, Error(ErrorKind::Eof));
     }
 
     #[test]
     fn conf_bad_array_not_scalar() {
-        let input = b"bad_array = [(1, 2, 3), (4, 5, 6)];\n";
-        let parsed = conf(&input[..]);
+        let input = "bad_array = [(1, 2, 3), (4, 5, 6)];\n";
+        let parsed = conf(input);
         assert_eq!(parsed, Error(ErrorKind::Eof));
     }
 
     #[test]
     fn conf_empty_list() {
-        let parsed = conf(&b"list=();final=\n(\t  \n) \n;"[..]);
+        let parsed = conf("list=();final=\n(\t  \n) \n;");
 
         let mut expected = SettingsList::new();
         expected.insert("list".to_string(),
@@ -2713,28 +2702,28 @@ mod test {
         expected.insert("final".to_string(),
                         Setting::new("final".to_string(), Value::List(Vec::new())));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_nested_empty_list() {
-        let parsed = conf(&b"list=((()));\n"[..]);
+        let parsed = conf("list=((()));\n");
 
         let mut expected = SettingsList::new();
         expected.insert("list".to_string(),
                         Setting::new("list".to_string(),
                                      Value::List(vec![Value::List(vec![Value::List(Vec::new())])])));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_scalar_lists() {
-        let parsed = conf(&concat!("my_list = (\n\"a \\\"string\\\" with \\nquo\\ttes\",\n",
+        let parsed = conf(concat!("my_list = (\n\"a \\\"string\\\" with \\nquo\\ttes\",\n",
                                    "15, 0.25e+2, 9000000000000000000L, 54, 55937598585.5L,\n",
                                    "yes\n,\ntrue\t,false,NO\n\n\n);\nanother_list=(10, \"0\");\n",
                                    "another_list\n=\n(\n   yes, 19, \"bye\"\n)\n;\n",
-                                   "last_one:(true);\n").as_bytes()[..]);
+                                   "last_one:(true);\n"));
 
         let mut expected = SettingsList::new();
         expected.insert("my_list".to_string(),
@@ -2763,17 +2752,17 @@ mod test {
                         Setting::new("last_one".to_string(),
                                      Value::List(vec![Value::Svalue(ScalarValue::Boolean(true))])));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn conf_values_list() {
-        let parsed = conf(&concat!("my_superb_list = (",
+        let parsed = conf(concat!("my_superb_list = (",
                                    "[yes, no], 21, [0.25, .5, .125],",
                                    "(()), ((\"a\")), (\"a\"), [\"\\\"x\\\"\"],",
                                    "(14, [\"x\"], (true, (false, (4), [5, 6]), \"y\")),",
                                    "\"goodbye!\\r\\n\", ",
-                                   "{ s = [1, 2]; x = \"str\"; y = (); });\n").as_bytes()[..]);
+                                   "{ s = [1, 2]; x = \"str\"; y = (); });\n"));
 
         let mut group_in_list = SettingsList::new();
         group_in_list.insert("s".to_string(),
@@ -2820,12 +2809,12 @@ mod test {
         expected.insert("my_superb_list".to_string(),
                         Setting::new("my_superb_list".to_string(), Value::List(list_elements)));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn sample_conf_small() {
-        let parsed = conf(&concat!(
+        let parsed = conf(concat!(
             "\n\napplication:\n",
             "{\n",
             "  window:\n",
@@ -2842,7 +2831,7 @@ mod test {
             "    flag = TRUE;\n",
             "    states = [\"CT\", \"CA\", \"TX\", \"NV\", \"FL\"];",
             "  };\n",
-            "};\n").as_bytes()[..]);
+            "};\n"));
 
         let mut size_group = SettingsList::new();
         size_group.insert("w".to_string(),
@@ -2897,12 +2886,12 @@ mod test {
         expected.insert("application".to_string(),
                         Setting::new("application".to_string(), Value::Group(app_group)));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn sample_conf_comments() {
-        let parsed = conf(&concat!(
+        let parsed = conf(concat!(
             "\n\napplication:\n",
             "{//This is a comment. It spans until the end of the line\n",
             "  window:\n",
@@ -2920,7 +2909,7 @@ mod test {
             "    flag = TRUE;\n",
             "    //DING DONG!\nstates = [\"CT\", \"CA\", \"TX\", \"NV\", \"FL\"];",
             "  };\n",
-            "};\n").as_bytes()[..]);
+            "};\n"));
 
         let mut size_group = SettingsList::new();
         size_group.insert("w".to_string(),
@@ -2975,12 +2964,12 @@ mod test {
         expected.insert("application".to_string(),
                         Setting::new("application".to_string(), Value::Group(app_group)));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn sample_conf_all_features() {
-        let my_conf = &concat!(
+        let my_conf = concat!(
             "#----------------------------\n",
             "# Example Configuration File\n",
             "#---------------------------\n",
@@ -3062,7 +3051,7 @@ mod test {
             "};\n",
             "\n",
             "\n",
-            "### eof\n").as_bytes()[..];
+            "### eof\n");
 
 
         let parsed = conf(my_conf);
@@ -3253,12 +3242,12 @@ mod test {
                         Setting::new("misc".to_string(),
                                      Value::Group(misc_group)));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
     fn sample_conf_all_features_no_newline_on_end() {
-        let my_conf = &concat!(
+        let my_conf = concat!(
             "#----------------------------\n",
             "# Example Configuration File\n",
             "#---------------------------\n",
@@ -3340,7 +3329,7 @@ mod test {
             "};\n",
             "\n",
             "\n",
-            "### eof").as_bytes()[..];
+            "### eof");
 
 
         let parsed = conf(my_conf);
@@ -3531,7 +3520,7 @@ mod test {
                         Setting::new("misc".to_string(),
                                      Value::Group(misc_group)));
 
-        assert_eq!(parsed, Done(&b""[..], Config::new(expected)));
+        assert_eq!(parsed, Done("", Config::new(expected)));
     }
 
     #[test]
@@ -3540,22 +3529,22 @@ mod test {
         use std::env;
         env::set_var("TEST_BOOL", "Yes");
 
-        let input = &b"$\"TEST_BOOL\"::bool;\n"[..];
+        let input = "$\"TEST_BOOL\"::bool;\n";
         let res = boolean_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Boolean(true)));
+        assert_eq!(res, Done(";\n", ScalarValue::Boolean(true)));
 
-        let input = &b"$\"TEST_BOOL_NOT_FOUND\"::bool;\n"[..];
+        let input = "$\"TEST_BOOL_NOT_FOUND\"::bool;\n";
         let res = boolean_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Boolean(false)));
+        assert_eq!(res, Done(";\n", ScalarValue::Boolean(false)));
 
-        let input = &b"$\"TEST_BOOL\"::auto;\n"[..];
+        let input = "$\"TEST_BOOL\"::auto;\n";
         let res = auto_env_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Boolean(true)));
+        assert_eq!(res, Done(";\n", ScalarValue::Boolean(true)));
 
         env::set_var("TEST_BOOL", "False");
-        let input = &b"$\"TEST_BOOL\";\n"[..];
+        let input = "$\"TEST_BOOL\";\n";
         let res = auto_env_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Boolean(false)));
+        assert_eq!(res, Done(";\n", ScalarValue::Boolean(false)));
     }
 
     #[test]
@@ -3564,21 +3553,21 @@ mod test {
         use std::env;
         env::set_var("TEST_STR", "Env");
 
-        let input = &b"$\"TEST_STR\"::str;\n"[..];
+        let input = "$\"TEST_STR\"::str;\n";
         let res = str_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Str("Env".to_string())));
+        assert_eq!(res, Done(";\n", ScalarValue::Str("Env".to_string())));
 
-        let input = &b"$\"TEST_STR_NOT_FOUND\"::str;\n"[..];
+        let input = "$\"TEST_STR_NOT_FOUND\"::str;\n";
         let res = str_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Str("".to_string())));
+        assert_eq!(res, Done(";\n", ScalarValue::Str("".to_string())));
 
-        let input = &b"$\"TEST_STR\"::auto;\n"[..];
+        let input = "$\"TEST_STR\"::auto;\n";
         let res = auto_env_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Str("Env".to_string())));
+        assert_eq!(res, Done(";\n", ScalarValue::Str("Env".to_string())));
 
-        let input = &b"$\"TEST_STR\";\n"[..];
+        let input = "$\"TEST_STR\";\n";
         let res = auto_env_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Str("Env".to_string())));
+        assert_eq!(res, Done(";\n", ScalarValue::Str("Env".to_string())));
     }
 
     #[test]
@@ -3587,21 +3576,21 @@ mod test {
         use std::env;
         env::set_var("TEST_INT32", "-42");
 
-        let input = &b"$\"TEST_INT32\"::int;\n"[..];
+        let input = "$\"TEST_INT32\"::int;\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Integer32(-42i32)));
+        assert_eq!(res, Done(";\n", ScalarValue::Integer32(-42i32)));
 
-        let input = &b"$\"TEST_INT32_NOT_FOUND\"::int;\n"[..];
+        let input = "$\"TEST_INT32_NOT_FOUND\"::int;\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Integer32(0i32)));
+        assert_eq!(res, Done(";\n", ScalarValue::Integer32(0i32)));
 
-        let input = &b"$\"TEST_INT32\"::auto;\n"[..];
+        let input = "$\"TEST_INT32\"::auto;\n";
         let res = auto_env_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Integer32(-42i32)));
+        assert_eq!(res, Done(";\n", ScalarValue::Integer32(-42i32)));
 
-        let input = &b"$\"TEST_INT32\";\n"[..];
+        let input = "$\"TEST_INT32\";\n";
         let res = auto_env_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Integer32(-42i32)));
+        assert_eq!(res, Done(";\n", ScalarValue::Integer32(-42i32)));
     }
 
     #[test]
@@ -3610,17 +3599,17 @@ mod test {
         use std::env;
         env::set_var("TEST_INT64", "+42L");
 
-        let input = &b"$\"TEST_INT64\"::int;\n"[..];
+        let input = "$\"TEST_INT64\"::int;\n";
         let res = int_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Integer64(42i64)));
+        assert_eq!(res, Done(";\n", ScalarValue::Integer64(42i64)));
 
-        let input = &b"$\"TEST_INT64\"::auto;\n"[..];
+        let input = "$\"TEST_INT64\"::auto;\n";
         let res = auto_env_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Integer64(42i64)));
+        assert_eq!(res, Done(";\n", ScalarValue::Integer64(42i64)));
 
-        let input = &b"$\"TEST_INT64\";\n"[..];
+        let input = "$\"TEST_INT64\";\n";
         let res = auto_env_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Integer64(42i64)));
+        assert_eq!(res, Done(";\n", ScalarValue::Integer64(42i64)));
     }
 
     #[test]
@@ -3629,15 +3618,16 @@ mod test {
         use std::env;
         env::set_var("TEST_FLT32", "3.1415");
 
-        let input = &b"$\"TEST_FLT32\"::flt;\n"[..];
+        let input = "$\"TEST_FLT32\"::flt;\n";
         let res = flt_scalar_value(input);
         if let Done(_, ScalarValue::Floating32(value)) = res {
+            println!("value is {}", value);
           assert!(value > 3.1414 && value < 3.1416);
         } else {
           panic!("Failed to read env f32: {:?}", res);
         }
 
-        let input = &b"$\"TEST_FLT32_NOT_FOUND\"::flt;\n"[..];
+        let input = "$\"TEST_FLT32_NOT_FOUND\"::flt;\n";
         let res = flt_scalar_value(input);
         if let Done(_, ScalarValue::Floating32(value)) = res {
           assert!(value > -0.0001 && value < 0.0001);
@@ -3645,7 +3635,7 @@ mod test {
           panic!("Failed to read fake env float: {:?}", res);
         }
 
-        let input = &b"$\"TEST_FLT32\"::auto;\n"[..];
+        let input = "$\"TEST_FLT32\"::auto;\n";
         let res = auto_env_scalar_value(input);
         if let Done(_, ScalarValue::Floating32(value)) = res {
           assert!(value > 3.1414 && value < 3.1416);
@@ -3653,7 +3643,7 @@ mod test {
           panic!("Failed to read env f32: {:?}", res);
         }
 
-        let input = &b"$\"TEST_FLT32\";\n"[..];
+        let input = "$\"TEST_FLT32\";\n";
         let res = auto_env_scalar_value(input);
         if let Done(_, ScalarValue::Floating32(value)) = res {
           assert!(value > 3.1414 && value < 3.1416);
@@ -3668,7 +3658,7 @@ mod test {
         use std::env;
         env::set_var("TEST_FLT64", "-3.1415L");
 
-        let input = &b"$\"TEST_FLT64\"::flt;\n"[..];
+        let input = "$\"TEST_FLT64\"::flt;\n";
         let res = flt_scalar_value(input);
         if let Done(_, ScalarValue::Floating64(value)) = res {
           assert!(value > -3.1416 && value < -3.1414);
@@ -3676,7 +3666,7 @@ mod test {
           panic!("Failed to read env f64: {:?}", res);
         }
 
-        let input = &b"$\"TEST_FLT64\"::auto;\n"[..];
+        let input = "$\"TEST_FLT64\"::auto;\n";
         let res = auto_env_scalar_value(input);
         if let Done(_, ScalarValue::Floating64(value)) = res {
           assert!(value > -3.1416 && value < -3.1414);
@@ -3684,7 +3674,7 @@ mod test {
           panic!("Failed to read env f64: {:?}", res);
         }
 
-        let input = &b"$\"TEST_FLT64\";\n"[..];
+        let input = "$\"TEST_FLT64\";\n";
         let res = auto_env_scalar_value(input);
         if let Done(_, ScalarValue::Floating64(value)) = res {
           assert!(value > -3.1416 && value < -3.1414);
@@ -3695,8 +3685,8 @@ mod test {
 
     #[test]
     fn env_missing_auto_scalar_values() {
-        let input = &b"$\"TEST_NOT_FOUND\";\n"[..];
+        let input = "$\"TEST_NOT_FOUND\";\n";
         let res = auto_env_scalar_value(input);
-        assert_eq!(res, Done(&b";\n"[..], ScalarValue::Str("".to_string())));
+        assert_eq!(res, Done(";\n", ScalarValue::Str("".to_string())));
     }
 }
